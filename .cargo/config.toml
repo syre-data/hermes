@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-Z", "threads=0"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "erase_components"]
