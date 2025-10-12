@@ -10,13 +10,26 @@ mod parse;
 mod position;
 mod token;
 
-pub use eval::{Error, Value};
+pub use eval::{Context, Error, Value};
 
-pub fn eval(input: impl AsRef<str>) -> Result<Value, Error> {
+/// Validate the input can be parsed.
+pub fn parse(input: impl AsRef<str>) -> Result<(), Error> {
+    let lex = lex::tokenize(input);
+    if !lex.errors.is_empty() {
+        return Err(Error::Tokenize(lex.errors[0].value));
+    }
+    parse::parse(&lex.tokens).map_err(|err| Error::Parse(err.value))?;
+    Ok(())
+}
+
+pub fn eval<T>(input: impl AsRef<str>, ctx: T) -> Result<Value, Error>
+where
+    T: Context,
+{
     let lex = lex::tokenize(input);
     if !lex.errors.is_empty() {
         return Err(Error::Tokenize(lex.errors[0].value));
     }
     let ast = parse::parse(&lex.tokens).map_err(|err| Error::Parse(err.value))?;
-    eval::eval(ast)
+    eval::eval(ast, ctx)
 }

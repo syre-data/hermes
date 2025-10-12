@@ -251,6 +251,13 @@ pub struct CellIndex {
 }
 
 impl CellIndex {
+    pub fn new(row: impl Into<IndexType>, col: impl Into<IndexType>) -> Self {
+        Self {
+            row: row.into(),
+            col: col.into(),
+        }
+    }
+
     pub fn row(&self) -> IndexType {
         self.row
     }
@@ -301,7 +308,12 @@ impl PartialOrd for CellIndex {
 
 impl fmt::Display for CellIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", utils::index_to_col(self.col), utils::index_to_row(self.row))
+        write!(
+            f,
+            "{}{}",
+            utils::index_to_col(self.col),
+            utils::index_to_row(self.row)
+        )
     }
 }
 
