@@ -1,0 +1,20 @@
+[build]
+target = "./index.html"
+
+[watch]
+ignore = ["./src-tauri"]
+
+[serve]
+port = 1420
+open = false
+
+# *nix
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = ["-c", "npx @tailwindcss/cli -i styles/main.css -o styles/output.css"]
+
+# Windows
+[hooks.windows]
+command = "cmd"
+command_arguments = ["/c", "npx @tailwindcss/cli -i styles\\main.css -o styles\\output.css"]

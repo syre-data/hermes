@@ -1,0 +1,153 @@
+@import 'tailwindcss';
+
+@plugin 'tailwind-scrollbar';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary-50: #f1fdff;
+  --color-primary-100: #e8f7f9;
+  --color-primary-200: #d0e6e9;
+  --color-primary-300: #b4dce1;
+  --color-primary-400: #95d1d9;
+  --color-primary-500: #77b9ce;
+  --color-primary-600: #51a1c4;
+  --color-primary-700: #2281aa;
+  --color-primary-800: #065b80;
+  --color-primary-900: #00364e;
+
+  --color-secondary-50: #f3f4f7;
+  --color-secondary-100: #e1e3e6;
+  --color-secondary-200: #c4c7cc;
+  --color-secondary-300: #a6aab3;
+  --color-secondary-400: #898e99;
+  --color-secondary-500: #6b7280;
+  --color-secondary-600: #565b66;
+  --color-secondary-700: #40444d;
+  --color-secondary-800: #2b2e33;
+  --color-secondary-900: #181a1e;
+
+  --color-brand-red-50: #ffe9e1;
+  --color-brand-red-100: #ffc1ab;
+  --color-brand-red-200: #ee9676;
+  --color-brand-red-300: #e97d55;
+  --color-brand-red-400: #e05c2b;
+  --color-brand-red-500: #d5410b;
+  --color-brand-red-600: #b33000;
+  --color-brand-red-700: #871319;
+  --color-brand-red-800: #570c10;
+  --color-brand-red-900: #3a080b;
+
+  --color-brand-yellow-50: #fffbf2;
+  --color-brand-yellow-100: #ffeecc;
+  --color-brand-yellow-200: #fee8b0;
+  --color-brand-yellow-300: #ffdc82;
+  --color-brand-yellow-400: #ffcc67;
+  --color-brand-yellow-500: #ffb800;
+  --color-brand-yellow-600: #d99717;
+  --color-brand-yellow-700: #996600;
+  --color-brand-yellow-800: #664400;
+  --color-brand-yellow-900: #3d2900;
+
+  --color-brand-green-50: #f7faf0;
+  --color-brand-green-100: #e9f1d8;
+  --color-brand-green-200: #d3e9cd;
+  --color-brand-green-300: #bed58b;
+  --color-brand-green-400: #a8c764;
+  --color-brand-green-500: #92b93d;
+  --color-brand-green-600: #759431;
+  --color-brand-green-700: #486f25;
+  --color-brand-green-800: #3a4a18;
+  --color-brand-green-900: #242e0f;
+
+  --font-primary: Oddity, Roboto, Inter, Avenir, Helvetica, Arial, sans-serif;
+  --font-secondary: Roboto, Inter, Avenir, Helvetica, Arial, sans-serif;
+
+  --transition-property-width: width;
+  --transition-property-size: width, height;
+  --transition-property-absolute-position: top, bottom, left, right;
+}
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}
+
+@utility btn {
+  @apply border border-solid rounded-2xl px-4 py-1 dark:text-white;
+}
+
+@utility btn-primary {
+  @apply bg-primary-700 text-white hover:bg-primary-800 dark:border-primary-600 
+			dark:bg-primary-500 dark:text-black dark:hover:bg-primary-400;
+}
+
+@utility btn-secondary {
+  @apply border-secondary-900 hover:bg-secondary-100 dark:border-secondary-600 
+			dark:bg-secondary-600 dark:hover:bg-secondary-500;
+}
+
+@utility btn-cmd {
+  @apply p-1 rounded-xs cursor-pointer;
+}
+
+@utility input-simple {
+  @apply rounded-sm focus:border-primary-300 focus:ring-3 focus:ring-primary-200/50 
+		  dark:bg-secondary-800 dark:focus:border-primary-700 dark:focus:ring-primary-800/50;
+
+  &input:not([type='checkbox']) {
+    @apply dark:text-white w-full;
+  }
+}
+
+@utility input-compact {
+  @apply max-w-full px-1 py-0.5 leading-5 rounded-xs focus:border-primary-300 
+			focus:ring-3 focus:ring-primary-200/50 dark:bg-secondary-800 
+			dark:focus:border-primary-700 dark:focus:ring-primary-800/50;
+  
+  &[type='select'] {
+    @apply pr-4;
+  }
+
+  &input:not([type='checkbox']) {
+    @apply dark:text-white;
+  }
+}
+
+@utility rtl {
+  direction: rtl;
+}
+
+@utility ltr {
+  direction: ltr;
+}
+
+@utility truncate-rtl {
+  @apply truncate text-left;
+  direction: rtl;
+}
+
+@layer base {
+	@font-face {
+		font-family: "Oddity";
+		font-weight: 400;
+		src: url("/public/fonts/oddity/Oddity-Regular.woff2") format("woff");
+	}
+
+	.linecap-round {
+		stroke-linecap: "round";
+	}
+}

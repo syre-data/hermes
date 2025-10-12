@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "tailwindcss": "^4.1.13",
+    "tailwind-scrollbar": "^4.0.0"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-dialog": "^2.4"
+  }
+}
