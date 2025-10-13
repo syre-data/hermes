@@ -35,6 +35,15 @@ impl From<Option<SheetIndex>> for SheetRef {
     }
 }
 
+/// Absolute path to a cell within a workbook.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellPath {
+    pub sheet: IndexType,
+    pub row: IndexType,
+    pub col: IndexType,
+}
+
+/// Path to a cell via reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellRef {
     pub sheet: SheetRef,

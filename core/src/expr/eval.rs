@@ -4,9 +4,14 @@ use std::{cmp, time};
 
 /// Provides the context to evaluate an expression in.
 pub trait Context: Copy {
-    /// Return the value of the cell.
+    /// # Arguments
+    /// + `cell_ref`: Cell reference.
+    /// + `origin`: Location where the cell reference originates from.
+    ///
+    /// # Returns
+    /// Value of the cell.
     /// `None` if the cell does not exist.
-    fn cell_value(&self, cell_ref: &data::CellRef) -> Option<Value>;
+    fn cell_value(self, cell_ref: &data::CellRef, origin: &data::CellPath) -> Option<Value>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,20 +98,20 @@ pub enum Error {
     InvalidCellRef(data::CellRef),
 }
 
-pub fn eval<T>(expr: ast::Expr, ctx: T) -> Result<Value, Error>
+pub fn eval<T>(expr: ast::Expr, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
 {
     match expr {
         ast::Expr::Empty => Ok(Value::Empty),
-        ast::Expr::Literal(value) => eval_literal(value, ctx),
-        ast::Expr::Binary(value) => eval_binary(value, ctx),
-        ast::Expr::Unary(value) => eval_unary(value, ctx),
-        ast::Expr::Group(value) => eval(*value.expr, ctx),
+        ast::Expr::Literal(value) => eval_literal(value, ctx, origin),
+        ast::Expr::Binary(value) => eval_binary(value, ctx, origin),
+        ast::Expr::Unary(value) => eval_unary(value, ctx, origin),
+        ast::Expr::Group(value) => eval(*value.expr, ctx, origin),
     }
 }
 
-fn eval_literal<T>(expr: ast::ExprLiteral, ctx: T) -> Result<Value, Error>
+fn eval_literal<T>(expr: ast::ExprLiteral, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
 {
@@ -124,19 +129,19 @@ where
                     .map_err(|_| Error::InvalidNumber)
             }
         }
-        ast::ExprLiteral::CellRef(value) => match ctx.cell_value(&value.value) {
+        ast::ExprLiteral::CellRef(value) => match ctx.cell_value(&value.value, origin) {
             None => Err(Error::InvalidCellRef(value.value.clone())),
             Some(value) => Ok(value),
         },
     }
 }
 
-fn eval_binary<T>(expr: ast::ExprBinary, ctx: T) -> Result<Value, Error>
+fn eval_binary<T>(expr: ast::ExprBinary, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
 {
-    let left = eval(*expr.left, ctx)?;
-    let right = eval(*expr.right, ctx)?;
+    let left = eval(*expr.left, ctx, origin)?;
+    let right = eval(*expr.right, ctx, origin)?;
     match expr.op {
         ast::OpBinary::Add => {
             if let Value::Int(left) = left
@@ -359,11 +364,11 @@ fn value_ord(left: &Value, right: &Value) -> Option<cmp::Ordering> {
     }
 }
 
-fn eval_unary<T>(expr: ast::ExprUnary, ctx: T) -> Result<Value, Error>
+fn eval_unary<T>(expr: ast::ExprUnary, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
 {
-    let value = eval(*expr.expr, ctx)?;
+    let value = eval(*expr.expr, ctx, origin)?;
     match expr.op {
         ast::OpUnary::Not => {
             let Value::Bool(value) = value else {
@@ -394,7 +399,7 @@ mod test {
     #[derive(Clone, Copy)]
     struct CtxEmpty;
     impl Context for CtxEmpty {
-        fn cell_value(&self, cell_ref: &data::CellRef) -> Option<Value> {
+        fn cell_value(self, cell_ref: &data::CellRef, origin: &data::CellPath) -> Option<Value> {
             None
         }
     }
@@ -402,12 +407,17 @@ mod test {
     #[test]
     fn eval_literal_test() {
         let ctx = CtxEmpty;
+        let origin = data::CellPath {
+            sheet: 0,
+            row: 0,
+            col: 0,
+        };
 
         // string
         let src = "'hi'";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::String("hi".into()));
@@ -416,7 +426,7 @@ mod test {
         let src = "5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(5));
@@ -425,7 +435,7 @@ mod test {
         let src = "5.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(5.0));
@@ -434,7 +444,7 @@ mod test {
         let src = "true";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -442,7 +452,7 @@ mod test {
         let src = "false";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -453,7 +463,11 @@ mod test {
         #[derive(Clone, Copy)]
         struct Ctx;
         impl Context for Ctx {
-            fn cell_value(&self, cell_ref: &data::CellRef) -> Option<Value> {
+            fn cell_value(
+                self,
+                cell_ref: &data::CellRef,
+                origin: &data::CellPath,
+            ) -> Option<Value> {
                 if cell_ref.sheet
                     == data::SheetRef::Absolute(data::SheetIndex::Label("string".to_string()))
                 {
@@ -482,11 +496,16 @@ mod test {
         }
 
         let ctx = Ctx;
+        let origin = data::CellPath {
+            sheet: 0,
+            row: 0,
+            col: 0,
+        };
 
         let src = "string!A1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::String("A1".to_string()));
@@ -494,7 +513,7 @@ mod test {
         let src = "int!A1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(0));
@@ -502,7 +521,7 @@ mod test {
         let src = "float!A1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(0.0));
@@ -511,12 +530,17 @@ mod test {
     #[test]
     fn eval_arithmatic() {
         let ctx = CtxEmpty;
+        let origin = data::CellPath {
+            sheet: 0,
+            row: 0,
+            col: 0,
+        };
 
         // + (int, int)
         let src = "4 + 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(7));
@@ -525,7 +549,7 @@ mod test {
         let src = "4 + 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(7.0));
@@ -533,7 +557,7 @@ mod test {
         let src = "4 + 3.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(7.5));
@@ -542,7 +566,7 @@ mod test {
         let src = "4.1 + 3.2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(7.3));
@@ -550,7 +574,7 @@ mod test {
         let src = "4.5 + 3.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(8.0));
@@ -559,7 +583,7 @@ mod test {
         let src = "4 - 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(1));
@@ -567,7 +591,7 @@ mod test {
         let src = "4 - 5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(-1));
@@ -576,7 +600,7 @@ mod test {
         let src = "4 - 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(1.0));
@@ -584,7 +608,7 @@ mod test {
         let src = "4 - 4.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-0.5));
@@ -593,7 +617,7 @@ mod test {
         let src = "4.3 - 3.2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         // TODO: Fails on float equality. Look into arbitrary precision arithmatic.
@@ -602,7 +626,7 @@ mod test {
         let src = "4.5 - 5.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-1.0));
@@ -611,7 +635,7 @@ mod test {
         let src = "4 * 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(12));
@@ -619,7 +643,7 @@ mod test {
         let src = "-4 * 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(-12));
@@ -628,7 +652,7 @@ mod test {
         let src = "4 * 3.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(14.0));
@@ -636,7 +660,7 @@ mod test {
         let src = "-4.5 * 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-13.5));
@@ -645,7 +669,7 @@ mod test {
         let src = "4.0 * 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(12.0));
@@ -653,7 +677,7 @@ mod test {
         let src = "-4.5 * 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-13.5));
@@ -662,7 +686,7 @@ mod test {
         let src = "12 / 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(6));
@@ -670,7 +694,7 @@ mod test {
         let src = "-12 / 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(-4));
@@ -678,7 +702,7 @@ mod test {
         let src = "-12 / 8";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-1.5));
@@ -687,7 +711,7 @@ mod test {
         let src = "12 / 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(6.0));
@@ -695,7 +719,7 @@ mod test {
         let src = "-12.0 / 3";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-4.0));
@@ -703,7 +727,7 @@ mod test {
         let src = "-12 / 2.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-4.8));
@@ -712,7 +736,7 @@ mod test {
         let src = "12.0 / 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(6.0));
@@ -720,7 +744,7 @@ mod test {
         let src = "-12.0 / 2.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-4.8));
@@ -729,7 +753,7 @@ mod test {
         let src = "12 % 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(0));
@@ -737,7 +761,7 @@ mod test {
         let src = "12 % 5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(2));
@@ -745,7 +769,7 @@ mod test {
         let src = "12 % -5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(2));
@@ -754,7 +778,7 @@ mod test {
         let src = "12 % 3.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(1.5));
@@ -762,7 +786,7 @@ mod test {
         let src = "12.5 % 5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(2.5));
@@ -770,7 +794,7 @@ mod test {
         let src = "-12.0 % 5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-2.0));
@@ -779,7 +803,7 @@ mod test {
         let src = "12.5 % 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(0.5));
@@ -787,7 +811,7 @@ mod test {
         let src = "-12.0 % 3.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(-1.5));
@@ -796,7 +820,7 @@ mod test {
         let src = "2 ** 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(4));
@@ -804,7 +828,7 @@ mod test {
         let src = "2 ** 5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Int(32));
@@ -812,7 +836,7 @@ mod test {
         let src = "2 ** -1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(0.5));
@@ -821,7 +845,7 @@ mod test {
         let src = "2 ** 1.5";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(2.8284271247461900976033774484194));
@@ -829,7 +853,7 @@ mod test {
         let src = "2.5 ** 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(6.25));
@@ -837,7 +861,7 @@ mod test {
         let src = "-2.0 ** 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(4.0));
@@ -846,7 +870,7 @@ mod test {
         let src = "2.0 ** 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(4.0));
@@ -854,7 +878,7 @@ mod test {
         let src = "-2.0 ** 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(4.0));
@@ -863,12 +887,17 @@ mod test {
     #[test]
     fn eval_comparison() {
         let ctx = CtxEmpty;
+        let origin = data::CellPath {
+            sheet: 0,
+            row: 0,
+            col: 0,
+        };
 
         // == (int, int)
         let src = "2 == 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -876,7 +905,7 @@ mod test {
         let src = "1 == 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -885,7 +914,7 @@ mod test {
         let src = "2.0 == 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -893,7 +922,7 @@ mod test {
         let src = "1.0 == 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -902,7 +931,7 @@ mod test {
         let src = "2.0 == 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -910,7 +939,7 @@ mod test {
         let src = "1.0 == 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -919,7 +948,7 @@ mod test {
         let src = "1 != 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -927,7 +956,7 @@ mod test {
         let src = "2 != 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -936,7 +965,7 @@ mod test {
         let src = "2.1 != 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -944,7 +973,7 @@ mod test {
         let src = "2.0 != 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -953,7 +982,7 @@ mod test {
         let src = "2.5 != 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -961,7 +990,7 @@ mod test {
         let src = "2.0 != 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -970,7 +999,7 @@ mod test {
         let src = "3 > 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -978,7 +1007,7 @@ mod test {
         let src = "2 > 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -987,7 +1016,7 @@ mod test {
         let src = "3.0 > 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -995,7 +1024,7 @@ mod test {
         let src = "1 > 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1004,7 +1033,7 @@ mod test {
         let src = "3.0 > 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1012,7 +1041,7 @@ mod test {
         let src = "1.0 > 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1021,7 +1050,7 @@ mod test {
         let src = "2 >= 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1029,7 +1058,7 @@ mod test {
         let src = "1 >= 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1038,7 +1067,7 @@ mod test {
         let src = "3.0 >= 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1046,7 +1075,7 @@ mod test {
         let src = "1 >= 1.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1054,7 +1083,7 @@ mod test {
         let src = "1 >= 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1063,7 +1092,7 @@ mod test {
         let src = "3.0 >= 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1071,7 +1100,7 @@ mod test {
         let src = "2.0 >= 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1079,7 +1108,7 @@ mod test {
         let src = "1.0 >= 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1088,7 +1117,7 @@ mod test {
         let src = "1 < 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1096,7 +1125,7 @@ mod test {
         let src = "2 < 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1105,7 +1134,7 @@ mod test {
         let src = "2 < 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1113,7 +1142,7 @@ mod test {
         let src = "2.0 < 1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1122,7 +1151,7 @@ mod test {
         let src = "2.0 < 3.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1130,7 +1159,7 @@ mod test {
         let src = "2.0 < -1.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1139,7 +1168,7 @@ mod test {
         let src = "2 <= 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1147,7 +1176,7 @@ mod test {
         let src = "1 <= -2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1156,7 +1185,7 @@ mod test {
         let src = "-3.0 <= 2";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1164,7 +1193,7 @@ mod test {
         let src = "1 <= 1.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1172,7 +1201,7 @@ mod test {
         let src = "2.0 <= -1.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));
@@ -1181,7 +1210,7 @@ mod test {
         let src = "-3.0 <= 2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1189,7 +1218,7 @@ mod test {
         let src = "-2.0 <= -2.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(true));
@@ -1197,7 +1226,7 @@ mod test {
         let src = "2.0 <= 1.0";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
-        let Ok(res) = eval(ast, ctx) else {
+        let Ok(res) = eval(ast, ctx, &origin) else {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Bool(false));

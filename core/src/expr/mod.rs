@@ -22,7 +22,11 @@ pub fn parse(input: impl AsRef<str>) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn eval<T>(input: impl AsRef<str>, ctx: T) -> Result<Value, Error>
+pub fn eval<T>(
+    input: impl AsRef<str>,
+    ctx: T,
+    origin: &crate::data::CellPath,
+) -> Result<Value, Error>
 where
     T: Context,
 {
@@ -31,5 +35,5 @@ where
         return Err(Error::Tokenize(lex.errors[0].value));
     }
     let ast = parse::parse(&lex.tokens).map_err(|err| Error::Parse(err.value))?;
-    eval::eval(ast, ctx)
+    eval::eval(ast, ctx, origin)
 }
