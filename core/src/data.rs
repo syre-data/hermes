@@ -9,18 +9,21 @@ pub const SHEET_DELIMETER: char = '!';
 pub const REF_MODE_SIGIL: char = '$';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RefMode {
     Relative,
     Absolute,
 }
 
 #[derive(Clone, Debug, derive_more::From, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SheetIndex {
     Index(IndexType),
     Label(String),
 }
 
 #[derive(Clone, Debug, derive_more::From, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SheetRef {
     Relative,
     Absolute(SheetIndex),
@@ -45,6 +48,7 @@ pub struct CellPath {
 
 /// Path to a cell via reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CellRef {
     pub sheet: SheetRef,
     pub row: IndexType,

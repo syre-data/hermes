@@ -57,15 +57,15 @@ fn Workbook(workbook: state::Workbook) -> impl IntoView {
         match workbook.kind() {
             lib::data::WorkbookKind::Csv => {
                 let sheet = workbook.sheets.read().get(0).expect("sheet exists").clone();
-                Either::Right(view! {
-                    <div class="relative h-full">
-                        <Spreadsheet sheet />
+                Either::Left(view! {
+                    <div class="flex flex-col h-full min-h-0">
+                        <Spreadsheet sheet class="grow" />
                         <FormulaEditor />
                     </div>
                 })
             }
-            lib::data::WorkbookKind::Workbook => Either::Left(view! {
-                <div class="relative flex flex-col h-full w-full">
+            lib::data::WorkbookKind::Workbook => Either::Right(view! {
+                <div class="flex flex-col h-full w-full">
                     <div class="grow">
                         {
                             let active_sheet = workbook.active_sheet.read_only();
@@ -77,7 +77,7 @@ fn Workbook(workbook: state::Workbook) -> impl IntoView {
                                     .get(active_sheet.get())
                                     .expect("sheet exists")
                                     .clone();
-                                view! { <Spreadsheet sheet /> }
+                                view! { <Spreadsheet sheet class="grow" /> }
                             }
                         }
                     </div>
@@ -124,7 +124,7 @@ fn FormulaEditor() -> impl IntoView {
 
     view! {
         <div
-            class="flex absolute bottom-0 left-0 right-0 bg-white dark:bg-secondary-800"
+            class="flex bg-white dark:bg-secondary-800"
             class:hidden=move || !formula_editor_vis.get()
         >
             <formula::Editor />
@@ -141,24 +141,35 @@ fn FormulaEditor() -> impl IntoView {
 struct ActiveSpreadsheet(state::ResourceId);
 
 #[component]
-fn Spreadsheet(sheet: state::Spreadsheet) -> impl IntoView {
+fn Spreadsheet(
+    sheet: state::Spreadsheet,
+    #[prop(optional, into)] class: Option<String>,
+) -> impl IntoView {
+    const ROW_BUFFER: core::data::IndexType = 100;
+    const COL_BUFFER: core::data::IndexType = 26;
+    const WRAPPER_CLASS: &'static str = "overflow-auto scrollbar-thin";
+
     let state = expect_context::<state::State>();
     let active_wb = expect_context::<ActiveWorkbookId>();
 
-    pub const ROW_BUFFER: usize = 100;
-    pub const COL_BUFFER: usize = 26;
     provide_context(ActiveSpreadsheet(sheet.id().clone()));
 
+    let wrapper_class = if let Some(class) = class {
+        format!("{class} {WRAPPER_CLASS}")
+    } else {
+        WRAPPER_CLASS.to_string()
+    };
+
     view! {
-        <div class="h-full overflow-auto scrollbar-thin">
-            <table>
+        <div class=wrapper_class>
+            <table class="table-fixed">
                 <thead class="bg-white dark:bg-secondary-800 sticky top-0">
                     <tr>
                         <th></th>
                         {
                             let size = sheet.size;
                             move || {
-                                let num_cols = size.get().1 + COL_BUFFER as core::data::IndexType;
+                                let num_cols = size.get().1 + COL_BUFFER;
                                 (0..num_cols)
                                     .into_iter()
                                     .map(|idx| {
@@ -180,48 +191,51 @@ fn Spreadsheet(sheet: state::Spreadsheet) -> impl IntoView {
                         let sheet_id = sheet.id().clone();
                         let size = sheet.size;
                         move || {
-                            let (num_rows, num_cols) = size.get();
-                            let num_rows = num_rows + ROW_BUFFER as core::data::IndexType;
-                            let num_cols = num_cols + COL_BUFFER as core::data::IndexType;
-                            (0..num_rows)
-                                .into_iter()
-                                .map(|row_idx| {
-                                    view! {
-                                        <tr>
-                                            <th class="sticky left-0 cursor-pointer bg-white dark:bg-secondary-800">
-                                                {core::utils::index_to_row(row_idx)}
-                                            </th>
-                                            {(0..num_cols)
-                                                .into_iter()
-                                                .map(|col_idx| {
-                                                    let idx: core::data::CellIndex = (row_idx, col_idx).into();
-                                                    match sheet.cells.read().get(&idx) {
-                                                        Some(data) => {
-                                                            EitherOf3::A(
-                                                                view! { <CellValueData data=data.clone() idx=idx /> },
-                                                            )
-                                                        }
-                                                        None => {
-                                                            let domain = state::FormulaDomain::Cell {
-                                                                workbook: workbook_id.clone(),
-                                                                sheet: sheet_id.clone(),
-                                                                cell: idx.clone(),
-                                                            };
-                                                            if let Some(formula) = formulas
-                                                                .get_by_containing_domain(&domain)
-                                                            {
-                                                                EitherOf3::B(view! { <CellValueFormula formula idx=idx /> })
-                                                            } else {
-                                                                EitherOf3::C(view! { <CellEmpty idx /> })
+                            let rows = move || {
+                                let num_rows = size.get().0 + ROW_BUFFER;
+                                0..num_rows
+                            };
+                            let cols = move || {
+                                let num_cols = size.get().1 + COL_BUFFER;
+                                0..num_cols
+                            };
+                            view! {
+                                <For each=rows key=|row| *row let:row_idx>
+                                    <tr>
+                                        <th class="sticky left-0 cursor-pointer bg-white dark:bg-secondary-800">
+                                            {core::utils::index_to_row(row_idx)}
+                                        </th>
+                                        <For each=cols key=|col| *col let:col_idx>
+                                            {
+                                                let idx: core::data::CellIndex = (row_idx, col_idx).into();
+                                                move || match sheet.cells.read().get(&idx) {
+                                                    None => {
+                                                        EitherOf3::A(view! { <CellEmpty idx=idx.clone() /> })
+                                                    }
+                                                    Some(data) => {
+                                                        match data {
+                                                            state::CellValue::Fixed(data) => {
+                                                                EitherOf3::B(
+                                                                    view! {
+                                                                        <CellValueFixed data=data.clone() idx=idx.clone() />
+                                                                    },
+                                                                )
+                                                            }
+                                                            state::CellValue::Variable(data) => {
+                                                                EitherOf3::C(
+                                                                    view! {
+                                                                        <CellValueVariable data=data.read_only() idx=idx.clone() />
+                                                                    },
+                                                                )
                                                             }
                                                         }
                                                     }
-                                                })
-                                                .collect::<Vec<_>>()}
-                                        </tr>
-                                    }
-                                })
-                                .collect::<Vec<_>>()
+                                                }
+                                            }
+                                        </For>
+                                    </tr>
+                                </For>
+                            }
                         }
                     }
                 </tbody>
@@ -233,46 +247,61 @@ fn Spreadsheet(sheet: state::Spreadsheet) -> impl IntoView {
 const STATIC_CELL_DATA_CLASS: &'static str =
     "cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700";
 
+/// Cell data for static data.
 #[component]
-fn CellValueData(data: lib::data::Data, idx: core::data::CellIndex) -> impl IntoView {
+fn CellValueFixed(data: lib::data::Data, idx: core::data::CellIndex) -> impl IntoView {
     view! {
-        <td class=STATIC_CELL_DATA_CLASS data-row=idx.row() ata-col=idx.col()>
+        <td class=STATIC_CELL_DATA_CLASS data-row=idx.row() data-col=idx.col()>
             {calamine_data_to_string(&data)}
         </td>
     }
 }
 
 #[component]
-fn CellValueFormula(formula: state::Formula, idx: core::data::CellIndex) -> impl IntoView {
+fn CellValueVariable(
+    data: ReadSignal<state::VariableCellValue>,
+    idx: core::data::CellIndex,
+) -> impl IntoView {
+    move || match data.get() {
+        state::VariableCellValue::Empty => Either::Left(view! { <CellEmpty idx=idx.clone() /> }),
+        state::VariableCellValue::Formula(data) => {
+            Either::Right(view! { <CellValueFormula data idx=idx.clone() /> })
+        }
+    }
+}
+
+/// Cell data for dynamic data with a formula.
+#[component]
+fn CellValueFormula(
+    data: Result<lib::data::Data, core::expr::Error>,
+    idx: core::data::CellIndex,
+) -> impl IntoView {
     let state = expect_context::<state::State>();
-    tracing::trace!("formula");
-    let value = Signal::derive(move || {
-        Result::<core::expr::Value, core::expr::Error>::Ok(core::expr::Value::String(
-            "test".to_string(),
-        ))
-    });
 
-    let is_err = move || value.read().is_err();
-
-    let value_str = move || {
-        value.with(|value| match value {
-            Ok(value) => expr_value_to_string(value),
-            Err(err) => expr_error_to_string(err),
-        })
+    let select_formula = move |e: ev::MouseEvent| {
+        if e.button() != types::MouseButton::Primary {
+            return;
+        }
     };
 
     view! {
         <td
             class="cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700 border border-primary-600"
-            class:bg-brand-red-500=is_err
+            class:bg-brand-red-500=data.is_err()
             data-row=idx.row()
             data-col=idx.col()
+            on:mousedown=select_formula
         >
-            {value_str}
+            {match data.as_ref() {
+                Ok(data) => calamine_data_to_string(data),
+                Err(err) => todo!(),
+            }}
+
         </td>
     }
 }
 
+/// Cell data for an empty cell.
 #[component]
 fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
     let state = expect_context::<state::State>();
@@ -352,6 +381,7 @@ fn expr_error_to_string(error: &core::expr::Error) -> String {
         core::expr::Error::InvalidNumber => "#NaN".to_string(),
         core::expr::Error::InvalidOperation(_) => "#BadOp".to_string(),
         core::expr::Error::Overflow => "#Overflow".to_string(),
+        core::expr::Error::InvalidCellRef(cell_ref) => "#CellRef".to_string(),
     }
 }
 

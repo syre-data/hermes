@@ -1963,6 +1963,7 @@ dependencies = [
 name = "hermes-core"
 version = "0.0.1"
 dependencies = [
+ "calamine",
  "chrono",
  "derive_more 2.0.1",
  "serde",

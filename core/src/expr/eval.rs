@@ -10,8 +10,20 @@ pub trait Context: Copy {
     ///
     /// # Returns
     /// Value of the cell.
-    /// `None` if the cell does not exist.
-    fn cell_value(self, cell_ref: &data::CellRef, origin: &data::CellPath) -> Option<Value>;
+    fn cell_value(
+        self,
+        cell_ref: &data::CellRef,
+        origin: &data::CellPath,
+    ) -> Result<Value, ContextError>;
+}
+
+#[derive(Clone)]
+pub enum ContextError {
+    /// A referenced cell does not exist.
+    /// e.g. The sheet does not exist, or the cell index is out of bounds.
+    CellRefDoesNotExist,
+    /// The referenced cell contains a [value error](Error).
+    CellRefValueError(Error),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +90,43 @@ impl Value {
     }
 }
 
+#[cfg(feature = "calamine")]
+impl TryFrom<calamine::Data> for Value {
+    type Error = Error;
+    fn try_from(value: calamine::Data) -> Result<Self, Self::Error> {
+        use calamine::Data;
+
+        match value {
+            Data::Int(data) => Ok(Self::Int(data)),
+            Data::Float(data) => Ok(Self::Float(data)),
+            Data::String(data) => Ok(Self::String(data)),
+            Data::Bool(data) => Ok(Self::Bool(data)),
+            Data::DateTime(data) => todo!(),
+            Data::DateTimeIso(data) => todo!(),
+            Data::DurationIso(data) => todo!(),
+            Data::Error(err) => Err(err.into()),
+            Data::Empty => Ok(Self::Empty),
+        }
+    }
+}
+
+#[cfg(feature = "calamine")]
+impl Into<calamine::Data> for Value {
+    fn into(self) -> calamine::Data {
+        use calamine::Data;
+
+        match self {
+            Value::Empty => Data::Empty,
+            Value::String(data) => Data::String(data),
+            Value::Int(data) => Data::Int(data),
+            Value::Float(data) => Data::Float(data),
+            Value::Bool(data) => Data::Bool(data),
+            Value::DateTime(data) => todo!(),
+            Value::Duration(data) => todo!(),
+        }
+    }
+}
+
 /// Error value.
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -96,6 +145,24 @@ pub enum Error {
     Overflow,
     /// Invalid cell reference.
     InvalidCellRef(data::CellRef),
+}
+
+#[cfg(feature = "calamine")]
+impl From<calamine::CellErrorType> for Error {
+    fn from(value: calamine::CellErrorType) -> Self {
+        use calamine::CellErrorType;
+
+        match value {
+            CellErrorType::Div0 => Self::Div0,
+            CellErrorType::NA => todo!(),
+            CellErrorType::Name => todo!(),
+            CellErrorType::Null => todo!(),
+            CellErrorType::Num => Self::InvalidNumber,
+            CellErrorType::Ref => todo!(),
+            CellErrorType::Value => todo!(),
+            CellErrorType::GettingData => todo!(),
+        }
+    }
 }
 
 pub fn eval<T>(expr: ast::Expr, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
@@ -129,10 +196,13 @@ where
                     .map_err(|_| Error::InvalidNumber)
             }
         }
-        ast::ExprLiteral::CellRef(value) => match ctx.cell_value(&value.value, origin) {
-            None => Err(Error::InvalidCellRef(value.value.clone())),
-            Some(value) => Ok(value),
-        },
+        ast::ExprLiteral::CellRef(value) => {
+            ctx.cell_value(&value.value, origin)
+                .map_err(|err| match err {
+                    ContextError::CellRefDoesNotExist => Error::InvalidCellRef(value.value.clone()),
+                    ContextError::CellRefValueError(error) => error,
+                })
+        }
     }
 }
 
@@ -399,8 +469,12 @@ mod test {
     #[derive(Clone, Copy)]
     struct CtxEmpty;
     impl Context for CtxEmpty {
-        fn cell_value(self, cell_ref: &data::CellRef, origin: &data::CellPath) -> Option<Value> {
-            None
+        fn cell_value(
+            self,
+            cell_ref: &data::CellRef,
+            origin: &data::CellPath,
+        ) -> Result<Value, ContextError> {
+            Err(ContextError::CellRefDoesNotExist)
         }
     }
 
@@ -467,31 +541,31 @@ mod test {
                 self,
                 cell_ref: &data::CellRef,
                 origin: &data::CellPath,
-            ) -> Option<Value> {
+            ) -> Result<Value, ContextError> {
                 if cell_ref.sheet
                     == data::SheetRef::Absolute(data::SheetIndex::Label("string".to_string()))
                 {
                     let idx = data::CellIndex::new(cell_ref.row, cell_ref.col);
-                    return Some(Value::String(idx.to_string()));
+                    return Ok(Value::String(idx.to_string()));
                 }
                 if cell_ref.sheet
                     == data::SheetRef::Absolute(data::SheetIndex::Label("int".to_string()))
                 {
-                    return Some(Value::Int(cell_ref.row.into()));
+                    return Ok(Value::Int(cell_ref.row.into()));
                 }
                 if cell_ref.sheet
                     == data::SheetRef::Absolute(data::SheetIndex::Label("float".to_string()))
                 {
-                    return Some(Value::Float(cell_ref.row.into()));
+                    return Ok(Value::Float(cell_ref.row.into()));
                 }
                 if cell_ref.sheet
                     == data::SheetRef::Absolute(data::SheetIndex::Label("bool".to_string()))
                 {
                     let value = cell_ref.row % 2 == 0;
-                    return Some(Value::Bool(value));
+                    return Ok(Value::Bool(value));
                 }
 
-                None
+                Err(ContextError::CellRefDoesNotExist)
             }
         }
 

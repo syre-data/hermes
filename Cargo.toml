@@ -7,6 +7,8 @@ default-members = ["core"]
 hermes-core = { path = "core" }
 hermes-desktop-lib = { path = "desktop/src-lib" }
 
+# calamine = "0.30"
+calamine = { path = "C:\\Users\\carls\\Downloads\\calamine" }
 derive_more = "2.0"
 serde = "1.0"
 serde_json = "1.0"

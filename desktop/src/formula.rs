@@ -1,7 +1,7 @@
 use crate::{icon, state, types, workbook};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
-use leptos::{either::Either, ev, prelude::*};
+use leptos::{either::Either, ev, html, prelude::*};
 use leptos_icons::Icon;
 
 #[component]
@@ -200,12 +200,26 @@ fn EditorDisabled() -> impl IntoView {
 #[component]
 fn EditorEnabled(formula: state::Formula) -> impl IntoView {
     let state = expect_context::<state::State>();
+    let workspace_owner = expect_context::<state::WorkspaceOwner>();
     let editor_vis = expect_context::<state::FormulaEditorVisibility>();
+    let input_node = NodeRef::<html::Input>::new();
+
+    Effect::new(move || {
+        let Some(input) = input_node.get() else {
+            return;
+        };
+        if editor_vis.get() {
+            if let Err(err) = input.focus() {
+                tracing::warn!(?err);
+            };
+        }
+    });
 
     let (input, set_input) = signal(formula.value.get_untracked());
     let (error, set_error) = signal::<Option<&'static str>>(None);
 
     let save_formula = {
+        let workbooks = state.workbooks;
         let formulas = state.formulas;
         let active_formula = state.active_formula;
         let formula = formula.clone();
@@ -219,19 +233,17 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
                     active_formula.set(None);
                     editor_vis.set(false);
                 } else {
-                    match core::expr::eval(input) {
+                    match core::expr::parse(input) {
                         Ok(_expr) => {
                             set_error(None);
-                            formula.value.set(input.to_string())
+                            formula.value.set(input.to_string());
+                            sync_formula(&formula, &workbooks, &workspace_owner);
                         }
                         Err(err) => {
                             let msg = match err {
                                 core::expr::Error::Tokenize(_kind) => "syntax error",
                                 core::expr::Error::Parse(_kind) => "parse error",
-                                core::expr::Error::Div0 => "divide by 0",
-                                core::expr::Error::InvalidNumber => "could not parse number",
-                                core::expr::Error::InvalidOperation(_) => "invalid operation",
-                                core::expr::Error::Overflow => "value overflow",
+                                _ => unreachable!("invalid error kind"),
                             };
                             set_error(Some(msg));
                         }
@@ -241,9 +253,12 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
         }
     };
 
-    let save_formula_trigger = move |e: ev::SubmitEvent| {
-        e.prevent_default();
-        save_formula()
+    let save_formula_trigger = {
+        let save_formula = save_formula.clone();
+        move |e: ev::SubmitEvent| {
+            e.prevent_default();
+            save_formula()
+        }
     };
 
     let title = {
@@ -291,7 +306,13 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
                         class:border-color-brand-red-600=move || error.read().is_some()
                     >
                         <Icon icon=icon::Equal />
-                        <input type="text" class="input-compact" bind:value=(input, set_input) />
+                        <input
+                            node_ref=input_node
+                            name="formula"
+                            type="text"
+                            class="grow input-compact"
+                            bind:value=(input, set_input)
+                        />
                     </label>
                     <div>
                         <small class="color-brand-red-600">{error}</small>
@@ -300,4 +321,66 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
             </form>
         </div>
     }
+}
+
+/// Update workbook data for formula.
+/// Creates a new cell if needed.
+fn sync_formula(
+    formula: &state::Formula,
+    workbooks: &state::Workbooks,
+    owner: &state::WorkspaceOwner,
+) {
+    formula.domain.with_untracked(|domain| match domain {
+        state::FormulaDomain::Cell {
+            workbook,
+            sheet,
+            cell,
+        } => workbooks.with_untracked(|workbooks| {
+            let workbook = workbooks
+                .iter()
+                .find(|wb| wb.id() == workbook)
+                .expect("workbook should exist");
+            let (sheet_idx, cells) = workbook
+                .sheets
+                .read_untracked()
+                .iter()
+                .enumerate()
+                .find_map(|(idx, s)| (s.id() == sheet).then_some((idx, s.cells)))
+                .expect("sheet should exist");
+
+            let origin = core::data::CellPath {
+                sheet: sheet_idx as core::data::IndexType,
+                row: cell.row(),
+                col: cell.col(),
+            };
+
+            let value = core::expr::eval(formula.value.get_untracked(), workbook, &origin);
+            if cells.with_untracked(|cells| cells.contains_key(cell)) {
+                cells.with_untracked(|cells| {
+                    let state::CellValue::Variable(cell) = cells.get(cell).expect("cell to exist")
+                    else {
+                        panic!("expected a variable cell");
+                    };
+                    cell.set(state::VariableCellValue::Formula(
+                        value.map(|value| value.into()),
+                    ));
+                });
+            } else {
+                cells.update(|cells| {
+                    let state::CellValue::Variable(cell) =
+                        cells
+                            .entry(cell.clone())
+                            .or_insert(state::CellValue::Variable(
+                                owner.with(|| RwSignal::new(state::VariableCellValue::Empty)),
+                            ))
+                    else {
+                        panic!("expected a formula cell");
+                    };
+                    cell.set(state::VariableCellValue::Formula(
+                        value.map(|value| value.into()),
+                    ));
+                });
+            }
+        }),
+    })
 }

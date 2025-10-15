@@ -12,6 +12,7 @@ impl ResourceId {
     }
 }
 
+/// Abort handle used to cancel loading a workbook.
 #[derive(Clone)]
 pub struct LoadWorkbookActionAbortHandle(Option<Arc<ActionAbortHandle>>);
 impl LoadWorkbookActionAbortHandle {
@@ -30,6 +31,8 @@ impl LoadWorkbookActionAbortHandle {
     }
 }
 
+/// Reactive owner for the workspace.
+/// Use to hoist ownership when creating signals.
 #[derive(Clone, derive_more::Deref)]
 pub struct WorkspaceOwner(Owner);
 impl WorkspaceOwner {
@@ -139,13 +142,13 @@ impl Workbooks {
     }
 
     /// # Returns
-    /// Smallest dimensions `(rows, cols)` needed to accomodate all workbook sheets.
-    pub fn size(&self) -> (core::data::IndexType, core::data::IndexType) {
+    /// Smallest dimensions `(rows, cols)` needed to accomodate all fixed values across workbook sheets.
+    pub fn size_fixed(&self) -> (core::data::IndexType, core::data::IndexType) {
         let mut max_rows = 0;
         let mut max_cols = 0;
         for workbook in self.read_untracked().iter() {
             for sheet in workbook.sheets.read_untracked().iter() {
-                let (rows, cols) = sheet.size.get_untracked();
+                let (rows, cols) = sheet.size_fixed();
                 if rows > max_rows {
                     max_rows = rows
                 }
@@ -156,6 +159,43 @@ impl Workbooks {
         }
 
         (max_rows, max_cols)
+    }
+
+    pub fn get_variable_cells_by_domain(
+        &self,
+        domain: &FormulaDomain,
+    ) -> Vec<RwSignal<VariableCellValue>> {
+        match domain {
+            FormulaDomain::Cell {
+                workbook,
+                sheet,
+                cell,
+            } => {
+                let Some(sheets) = self
+                    .0
+                    .read_untracked()
+                    .iter()
+                    .find_map(|wb| (wb.id() == workbook).then_some(wb.sheets.read_only()))
+                else {
+                    return vec![];
+                };
+                let Some(cells) = sheets
+                    .read_untracked()
+                    .iter()
+                    .find_map(|s| (s.id() == sheet).then_some(s.cells.read_only()))
+                else {
+                    return vec![];
+                };
+                cells
+                    .read_untracked()
+                    .get(cell)
+                    .map(|cell| match cell {
+                        CellValue::Fixed(_) => vec![],
+                        CellValue::Variable(value) => vec![value.clone()],
+                    })
+                    .unwrap_or(vec![])
+            }
+        }
     }
 }
 
@@ -173,8 +213,9 @@ impl Workbook {
         let sheets = workbook
             .sheets()
             .iter()
-            .map(|(name, sheet)| Spreadsheet::with_cells(name, sheet.cells().clone()))
+            .map(|(name, sheet)| Spreadsheet::with_fixed_values(name, sheet.cells().clone()))
             .collect();
+
         Self {
             file,
             inner: RwSignal::new(workbook),
@@ -207,25 +248,144 @@ impl Workbook {
     }
 }
 
-pub type CellMap = BTreeMap<core::data::CellIndex, lib::data::Data>;
+impl core::expr::Context for &Workbook {
+    fn cell_value(
+        self,
+        cell_ref: &core::data::CellRef,
+        origin: &core::data::CellPath,
+    ) -> Result<core::expr::Value, core::expr::ContextError> {
+        let sheet = match cell_ref.sheet {
+            core::data::SheetRef::Relative => self
+                .sheets
+                .read_untracked()
+                .get(origin.sheet as usize)
+                .cloned(),
+            core::data::SheetRef::Absolute(ref sheet) => match sheet {
+                core::data::SheetIndex::Label(label) => self
+                    .sheets
+                    .read_untracked()
+                    .iter()
+                    .find(|sheet| sheet.name.with_untracked(|name| name == label))
+                    .cloned(),
+
+                core::data::SheetIndex::Index(idx) => {
+                    self.sheets.read_untracked().get(*idx as usize).cloned()
+                }
+            },
+        };
+        let Some(sheet) = sheet else {
+            return Err(core::expr::ContextError::CellRefDoesNotExist);
+        };
+
+        let idx = core::data::CellIndex::new(origin.row, origin.col);
+        match sheet.cells.with_untracked(|cells| cells.get(&idx).cloned()) {
+            None => {
+                return Ok(core::expr::Value::Empty);
+            }
+            Some(cell) => match cell {
+                CellValue::Fixed(data) => {
+                    return data
+                        .try_into()
+                        .map_err(core::expr::ContextError::CellRefValueError);
+                }
+                CellValue::Variable(data) => match data.get_untracked() {
+                    VariableCellValue::Empty => return Ok(core::expr::Value::Empty),
+                    VariableCellValue::Formula(data) => match data {
+                        Err(err) => return Err(core::expr::ContextError::CellRefValueError(err)),
+                        Ok(data) => {
+                            return data
+                                .try_into()
+                                .map_err(core::expr::ContextError::CellRefValueError);
+                        }
+                    },
+                },
+            },
+        }
+    }
+}
+
+pub type CellMap = BTreeMap<core::data::CellIndex, CellValue>;
+pub type FormulaCellValue = Result<lib::data::Data, core::expr::Error>;
+
+#[derive(Clone)]
+pub enum CellValue {
+    Fixed(lib::data::Data),
+    Variable(RwSignal<VariableCellValue>),
+}
+
+impl CellValue {
+    pub fn fixed(value: lib::data::Data) -> Self {
+        Self::Fixed(value)
+    }
+
+    pub fn empty() -> Self {
+        Self::Variable(RwSignal::new(VariableCellValue::Empty))
+    }
+
+    pub fn formula(value: FormulaCellValue) -> Self {
+        Self::Variable(RwSignal::new(VariableCellValue::Formula(value)))
+    }
+}
+
+#[derive(Clone, derive_more::From)]
+pub enum VariableCellValue {
+    Empty,
+    Formula(FormulaCellValue),
+}
 
 #[derive(Clone)]
 pub struct Spreadsheet {
     id: ResourceId,
     pub name: RwSignal<String>,
     pub cells: RwSignal<CellMap>,
-    /// `(rows, cols)` of data.
-    /// Excludes applied formulas.
+    /// Bounding rectangle to enclose all data, `(rows, cols)`.
     pub size: Signal<(core::data::IndexType, core::data::IndexType)>,
+    /// `(rows, cols)` of fixed data.
+    size_fixed: (core::data::IndexType, core::data::IndexType),
 }
 
 impl Spreadsheet {
     pub fn new(name: impl Into<String>) -> Self {
-        Self::with_cells(name, CellMap::new())
+        Self::with_fixed_values(name, lib::data::CellMap::new())
     }
 
-    pub fn with_cells(name: impl Into<String>, cells: CellMap) -> Self {
+    pub fn with_fixed_values(name: impl Into<String>, cells: lib::data::CellMap) -> Self {
+        const ROW_BUFFER: core::data::IndexType = 100;
+        const COL_BUFFER: core::data::IndexType = 26;
+
+        let size_fixed = {
+            let mut max_row = 0;
+            let mut max_col = 0;
+            for idx in cells.keys() {
+                if idx.row() > max_row {
+                    max_row = idx.row() + 1;
+                }
+                if idx.col() > max_col {
+                    max_col = idx.col() + 1;
+                }
+            }
+
+            (max_row, max_col)
+        };
+
+        let mut cells = cells
+            .into_iter()
+            .map(|(idx, value)| (idx, CellValue::Fixed(value)))
+            .collect::<CellMap>();
+        let cols = 0..size_fixed.1 + COL_BUFFER;
+        let rows = 0..size_fixed.0 + ROW_BUFFER;
+        for (idx, value) in cols
+            .map(|col| {
+                rows.clone()
+                    .map(|row| (core::data::CellIndex::new(row, col), CellValue::empty()))
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+        {
+            let _ = cells.entry(idx).or_insert(value);
+        }
         let cells = RwSignal::new(cells);
+
         let size = Signal::derive({
             let cells = cells.read_only();
             move || {
@@ -233,10 +393,10 @@ impl Spreadsheet {
                 let mut max_col = 0;
                 for idx in cells.read().keys() {
                     if idx.row() > max_row {
-                        max_row = idx.row();
+                        max_row = idx.row() + 1;
                     }
                     if idx.col() > max_col {
-                        max_col = idx.col();
+                        max_col = idx.col() + 1;
                     }
                 }
 
@@ -249,11 +409,17 @@ impl Spreadsheet {
             name: RwSignal::new(name.into()),
             cells,
             size,
+            size_fixed,
         }
     }
 
     pub fn id(&self) -> &ResourceId {
         &self.id
+    }
+
+    /// Bounding rectangle of fixed values, `(rows, cols)`.
+    pub fn size_fixed(&self) -> (core::data::IndexType, core::data::IndexType) {
+        self.size_fixed
     }
 }
 

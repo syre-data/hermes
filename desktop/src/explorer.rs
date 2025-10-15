@@ -441,7 +441,9 @@ mod nav {
                                             on:mousedown=abort_load_workbook.clone()
                                             class="cursor-pointer"
                                         >
-                                            <Icon icon=icon::LoadingSpinner />
+                                            <span class="block animate-spin">
+                                                <Icon icon=icon::LoadingSpinner />
+                                            </span>
                                         </button>
                                     </div>
                                 },
