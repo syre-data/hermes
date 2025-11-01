@@ -22,14 +22,16 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 
-hermes-core.workspace = true
+hermes-core = { workspace = true, features = ["calamine"] }
 hermes-desktop-lib = { workspace = true, features = ["fs"] }
 
+csv.workspace = true
 notify = { version = "8.0", default-features = false }
 notify-debouncer-full = { version = "0.6", default-features = false }
 rayon = "1.8"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tokio = { version = "1.48", features = ["rt", "fs"] }
 tracing = { workspace = true, optional = true }
 tracing-appender = { version = "0.2", optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = [

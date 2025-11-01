@@ -1,6 +1,6 @@
 use super::{ast, lex, parse};
 use crate::data;
-use std::{cmp, time};
+use std::{cmp, fmt, time};
 
 /// Provides the context to evaluate an expression in.
 pub trait Context: Copy {
@@ -90,6 +90,20 @@ impl Value {
     }
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Empty => write!(f, ""),
+            Value::String(value) => write!(f, "{value}"),
+            Value::Int(value) => write!(f, "{value}"),
+            Value::Float(value) => write!(f, "{value}"),
+            Value::Bool(value) => write!(f, "{value}"),
+            Value::DateTime(date_time) => todo!(),
+            Value::Duration(duration) => todo!(),
+        }
+    }
+}
+
 #[cfg(feature = "calamine")]
 impl TryFrom<calamine::Data> for Value {
     type Error = Error;
@@ -128,7 +142,7 @@ impl Into<calamine::Data> for Value {
 }
 
 /// Error value.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Error {
     /// Invalid syntax.
@@ -165,6 +179,7 @@ impl From<calamine::CellErrorType> for Error {
     }
 }
 
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "trace"))]
 pub fn eval<T>(expr: ast::Expr, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
@@ -178,6 +193,7 @@ where
     }
 }
 
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "trace"))]
 fn eval_literal<T>(expr: ast::ExprLiteral, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
@@ -206,6 +222,7 @@ where
     }
 }
 
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "trace"))]
 fn eval_binary<T>(expr: ast::ExprBinary, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
@@ -434,6 +451,7 @@ fn value_ord(left: &Value, right: &Value) -> Option<cmp::Ordering> {
     }
 }
 
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "trace"))]
 fn eval_unary<T>(expr: ast::ExprUnary, ctx: T, origin: &data::CellPath) -> Result<Value, Error>
 where
     T: Context,
@@ -565,6 +583,23 @@ mod test {
                     return Ok(Value::Bool(value));
                 }
 
+                if cell_ref.sheet == data::SheetRef::Relative {
+                    match (cell_ref.col_mode, cell_ref.row_mode) {
+                        (data::RefMode::Relative, data::RefMode::Relative) => {
+                            return Ok(Value::Bool(true));
+                        }
+                        (data::RefMode::Relative, data::RefMode::Absolute) => {
+                            return Ok(Value::Int(0));
+                        }
+                        (data::RefMode::Absolute, data::RefMode::Relative) => {
+                            return Ok(Value::Float(0.0));
+                        }
+                        (data::RefMode::Absolute, data::RefMode::Absolute) => {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                }
+
                 Err(ContextError::CellRefDoesNotExist)
             }
         }
@@ -576,6 +611,7 @@ mod test {
             col: 0,
         };
 
+        // absolute sheet ref
         let src = "string!A1";
         let lex = lex::tokenize(src);
         let ast = parse::parse(&lex.tokens).expect("input to be valid");
@@ -599,6 +635,39 @@ mod test {
             panic!("invalid input");
         };
         assert_eq!(res, Value::Float(0.0));
+
+        // relative sheet ref
+        let src = "A1";
+        let lex = lex::tokenize(src);
+        let ast = parse::parse(&lex.tokens).expect("input to be valid");
+        let Ok(res) = eval(ast, ctx, &origin) else {
+            panic!("invalid input");
+        };
+        assert_eq!(res, Value::Bool(true));
+
+        let src = "$A$1";
+        let lex = lex::tokenize(src);
+        let ast = parse::parse(&lex.tokens).expect("input to be valid");
+        let Ok(res) = eval(ast, ctx, &origin) else {
+            panic!("invalid input");
+        };
+        assert_eq!(res, Value::Bool(false));
+
+        let src = "$A1";
+        let lex = lex::tokenize(src);
+        let ast = parse::parse(&lex.tokens).expect("input to be valid");
+        let Ok(res) = eval(ast, ctx, &origin) else {
+            panic!("invalid input");
+        };
+        assert_eq!(res, Value::Float(0.0));
+
+        let src = "A$1";
+        let lex = lex::tokenize(src);
+        let ast = parse::parse(&lex.tokens).expect("input to be valid");
+        let Ok(res) = eval(ast, ctx, &origin) else {
+            panic!("invalid input");
+        };
+        assert_eq!(res, Value::Int(0));
     }
 
     #[test]

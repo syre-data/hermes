@@ -4,6 +4,9 @@ use hermes_desktop_lib as lib;
 use leptos::prelude::*;
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, sync::Arc};
 
+const CANVAS_ROWS_DEFAULT: core::data::IndexType = 100;
+const CANVAS_COLS_DEFAULT: core::data::IndexType = 26;
+
 #[derive(Clone, derive_more::Deref, Hash, PartialEq, Eq, Debug)]
 pub struct ResourceId(uuid::Uuid);
 impl ResourceId {
@@ -51,6 +54,14 @@ pub enum ActiveWorkbook {
 }
 
 impl ActiveWorkbook {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub fn is_some(&self) -> bool {
+        matches!(self, Self::Some { .. })
+    }
+
     /// Sets `self` to `Self::Some { id: <id>, active_cell: ActiveCell::None }`.
     pub fn insert(&mut self, id: ResourceId) {
         *self = Self::Some {
@@ -113,6 +124,7 @@ pub struct State {
     pub workbooks: Workbooks,
     pub formulas: Formulas,
     pub active_formula: RwSignal<Option<ResourceId>>,
+    pub canvas: Canvas,
 }
 
 impl State {
@@ -126,6 +138,7 @@ impl State {
             workbooks: Workbooks::new(),
             formulas: Formulas::new(),
             active_formula: RwSignal::new(None),
+            canvas: Canvas::new(CANVAS_ROWS_DEFAULT, CANVAS_COLS_DEFAULT),
         }
     }
 
@@ -249,6 +262,7 @@ impl Workbook {
 }
 
 impl core::expr::Context for &Workbook {
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     fn cell_value(
         self,
         cell_ref: &core::data::CellRef,
@@ -277,25 +291,27 @@ impl core::expr::Context for &Workbook {
             return Err(core::expr::ContextError::CellRefDoesNotExist);
         };
 
-        let idx = core::data::CellIndex::new(origin.row, origin.col);
+        let idx = core::data::CellIndex::new(cell_ref.row, cell_ref.col);
         match sheet.cells.with_untracked(|cells| cells.get(&idx).cloned()) {
             None => {
                 return Ok(core::expr::Value::Empty);
             }
             Some(cell) => match cell {
                 CellValue::Fixed(data) => {
-                    return data
-                        .try_into()
-                        .map_err(core::expr::ContextError::CellRefValueError);
+                    // return data
+                    //     .try_into()
+                    //     .map_err(core::expr::ContextError::CellRefValueError);
+                    return Ok(data);
                 }
                 CellValue::Variable(data) => match data.get_untracked() {
                     VariableCellValue::Empty => return Ok(core::expr::Value::Empty),
                     VariableCellValue::Formula(data) => match data {
                         Err(err) => return Err(core::expr::ContextError::CellRefValueError(err)),
                         Ok(data) => {
-                            return data
-                                .try_into()
-                                .map_err(core::expr::ContextError::CellRefValueError);
+                            // return data
+                            //     .try_into()
+                            //     .map_err(core::expr::ContextError::CellRefValueError);
+                            return Ok(data);
                         }
                     },
                 },
@@ -331,6 +347,19 @@ impl CellValue {
 pub enum VariableCellValue {
     Empty,
     Formula(FormulaCellValue),
+}
+
+impl VariableCellValue {
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+
+    pub fn unwrap(self) -> FormulaCellValue {
+        match self {
+            Self::Empty => panic!("called `VariableCellValue::unwrap()` on an `Empty` value"),
+            Self::Formula(formula) => formula,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -372,18 +401,6 @@ impl Spreadsheet {
             .into_iter()
             .map(|(idx, value)| (idx, CellValue::Fixed(value)))
             .collect::<CellMap>();
-        let cols = 0..size_fixed.1 + COL_BUFFER;
-        let rows = 0..size_fixed.0 + ROW_BUFFER;
-        for (idx, value) in cols
-            .map(|col| {
-                rows.clone()
-                    .map(|row| (core::data::CellIndex::new(row, col), CellValue::empty()))
-                    .collect::<Vec<_>>()
-            })
-            .flatten()
-        {
-            let _ = cells.entry(idx).or_insert(value);
-        }
         let cells = RwSignal::new(cells);
 
         let size = Signal::derive({
@@ -762,5 +779,127 @@ impl DirectoryTree {
                 Ok(children)
             }
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct Canvas {
+    cells: CanvasCells,
+    rows: RwSignal<core::data::IndexType>,
+    cols: RwSignal<core::data::IndexType>,
+}
+impl Canvas {
+    pub fn new(rows: core::data::IndexType, cols: core::data::IndexType) -> Self {
+        Self {
+            cells: CanvasCells::new(rows, cols),
+            rows: RwSignal::new(rows),
+            cols: RwSignal::new(cols),
+        }
+    }
+
+    pub fn cells(&self) -> CanvasCells {
+        self.cells
+    }
+
+    pub fn rows(&self) -> ReadSignal<core::data::IndexType> {
+        self.rows.read_only()
+    }
+
+    pub fn cols(&self) -> ReadSignal<core::data::IndexType> {
+        self.cols.read_only()
+    }
+}
+
+#[derive(Clone)]
+pub enum CanvasCellValue {
+    Unset,
+    Set(CellValue),
+}
+impl CanvasCellValue {
+    pub fn unwrap(&self) -> &CellValue {
+        match self {
+            Self::Unset => panic!("tried to unwrap an unset canvas cell value"),
+            Self::Set(value) => value,
+        }
+    }
+
+    pub fn is_set(&self) -> bool {
+        matches!(self, Self::Set(_))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        let Self::Set(CellValue::Variable(value)) = self else {
+            return false;
+        };
+        value.read_untracked().is_empty()
+    }
+
+    pub fn insert(&mut self, value: CellValue) {
+        *self = Self::Set(value);
+    }
+
+    pub fn take(&mut self) {
+        *self = Self::Unset
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CanvasCells {
+    inner: RwSignal<Vec<Vec<RwSignal<CanvasCellValue>>>>,
+}
+impl CanvasCells {
+    pub fn new(rows: core::data::IndexType, cols: core::data::IndexType) -> Self {
+        let mut cells = Vec::with_capacity(rows as usize);
+        for _ in 0..rows {
+            let mut row = Vec::with_capacity(cols as usize);
+            for _ in 0..cols {
+                row.push(RwSignal::new(CanvasCellValue::Unset));
+            }
+            cells.push(row);
+        }
+
+        Self {
+            inner: RwSignal::new(cells),
+        }
+    }
+
+    pub fn get_cell(&self, idx: &core::data::CellIndex) -> Option<RwSignal<CanvasCellValue>> {
+        let row = idx.row() as usize;
+        let col = idx.col() as usize;
+        let rows = self.inner.read_untracked().len();
+        if row >= rows {
+            return None;
+        }
+        let cols = self.inner.read_untracked()[0].len();
+        if col >= cols {
+            return None;
+        }
+        Some(self.inner.read_untracked()[row][col].clone())
+    }
+
+    /// Unset all cells.
+    pub fn clear(&self) {
+        self.inner.with_untracked(|cells| {
+            for row in cells.iter() {
+                for cell in row.iter() {
+                    if cell.read_untracked().is_set() {
+                        cell.update(|cell| cell.take());
+                    }
+                }
+            }
+        });
+    }
+
+    /// Set all cells to empty.
+    pub fn empty(&self) {
+        self.inner.with_untracked(|cells| {
+            for row in cells.iter() {
+                for cell in row.iter() {
+                    if !cell.read_untracked().is_empty() {
+                        cell.update(|cell| cell.insert(CellValue::empty()));
+                    }
+                }
+            }
+        });
     }
 }

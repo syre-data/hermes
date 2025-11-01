@@ -1,43 +1,50 @@
 use crate::data;
 use hermes_core as core;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-pub enum Output {
-    Value,
-    Array,
+#[derive(Serialize, Deserialize, derive_more::From, Clone, Debug)]
+pub enum WorkspaceOrder {
+    Create,
+    Update(Update),
 }
 
-#[derive(Clone)]
-pub struct Formula(String);
-impl Formula {
-    pub fn new() -> Self {
-        Self(String::new())
-    }
-
-    pub fn validate(&self) -> Result<(), error::Formula> {
-        todo!()
-    }
-
-    pub fn inputs(&self) -> Result<Vec<core::data::IndexType>, error::Formula> {
-        todo!()
-    }
-
-    pub fn output_kind(&self) -> Result<Output, error::Formula> {
-        todo!()
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Update {
+    pub path: PathBuf,
+    pub updates: Updates,
 }
 
-#[derive(Clone)]
-pub struct Calculation {
-    formula: Formula,
+#[derive(Serialize, Deserialize, derive_more::From, Clone, Debug)]
+pub enum Updates {
+    Csv(Vec<UpdateCsv>),
+    Workbook(Vec<UpdateWorkbook>),
 }
 
-impl Calculation {
-    pub fn new(formula: Formula) -> Self {
-        Self { formula }
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UpdateCsv {
+    pub row: core::data::IndexType,
+    pub col: core::data::IndexType,
+    pub value: core::expr::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UpdateWorkbook {
+    pub sheet: core::data::IndexType,
+    pub row: core::data::IndexType,
+    pub col: core::data::IndexType,
+    pub value: core::expr::Value,
 }
 
 pub mod error {
-    pub enum Formula {}
+    use serde::{Deserialize, Serialize};
+    use std::io;
+
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+
+    pub enum WorkspaceOrder {
+        /// The task could not be completed.
+        TaskNotCompleted,
+        CouldNotOpenFile(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
+    }
 }

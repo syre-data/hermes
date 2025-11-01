@@ -1,6 +1,36 @@
 //! File explorer.
 pub use active::ActiveFiles;
 pub use nav::FileTree;
+pub use output::OutputFiles;
+
+mod output {
+    use crate::{icon, types};
+    use leptos::{ev, prelude::*};
+    use leptos_icons::Icon;
+
+    #[component]
+    pub fn OutputFiles() -> impl IntoView {
+        let add_output_file = move |e: ev::MouseEvent| {
+            if e.button() != types::MouseButton::Primary {
+                return;
+            }
+        };
+
+        view! {
+            <div>
+                <div class="pb flex gap-2">
+                    <h2 class="grow font-bold uppercase">"Output files"</h2>
+                    <div>
+                        <button type="button" class="btn-cmd cursor-pointer">
+                            <Icon icon=icon::Add />
+                        </button>
+                    </div>
+                </div>
+                <div></div>
+            </div>
+        }
+    }
+}
 
 mod active {
     use crate::{LEVEL_PAD, LEVEL_PAD_UNIT, icon, state, types};
@@ -16,7 +46,7 @@ mod active {
         view! {
             <div>
                 <div class="pb">
-                    <h2 class="font-bold uppercase">"Selected files"</h2>
+                    <h2 class="font-bold uppercase">"Input files"</h2>
                 </div>
                 <div>
                     <For each=state.selected_files.read_only() key=|id| id.clone() let:id>

@@ -10,7 +10,7 @@ mod parse;
 mod position;
 mod token;
 
-pub use eval::{Context, Error, Value, ContextError};
+pub use eval::{Context, ContextError, Error, Value};
 
 /// Validate the input can be parsed.
 pub fn parse(input: impl AsRef<str>) -> Result<(), Error> {

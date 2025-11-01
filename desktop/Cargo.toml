@@ -23,7 +23,7 @@ uuid = { version = "1.18", features = ["v4", "js"] }
 leptos = { version = "0.8", features = ["nightly", "csr"] }
 leptos_meta = { version = "0.8" }
 leptos_router = "0.8"
-reactive_stores = "0.2"
+reactive_stores = "0.3"
 leptos_icons = { git = "https://github.com/carloskiki/leptos-icons" }
 
 [dependencies.icondata]

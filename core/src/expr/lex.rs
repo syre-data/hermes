@@ -5,7 +5,7 @@ use super::{
 use crate::data;
 use std::iter;
 
-#[cfg_attr(feature = "tracing", tracing::instrument(level = "debug"))]
+#[cfg_attr(feature = "tracing", tracing::instrument(level = "trace", fields(src = %src.as_ref())))]
 pub fn tokenize(src: impl AsRef<str>) -> Lex {
     let mut lexer = Lexer::new(src.as_ref());
     lexer.tokenize();
