@@ -1,20 +1,36 @@
 use std::path::PathBuf;
 
-pub struct Event {
-    paths: Vec<PathBuf>,
-    resource: FsResource,
-    kind: EventKind,
+#[derive(Debug, derive_more::From)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Event {
+    File(File),
+    Folder(Folder),
+
+    /// Could not determine if the event affects a file, folder, or other resource.
+    Any(Any),
 }
 
-pub enum FsResource {
-    Folder,
-    File,
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum File {
+    Created(PathBuf),
+    Removed(PathBuf),
+    Renamed { from: PathBuf, to: PathBuf },
+    Moved { from: PathBuf, to: PathBuf },
+    Modified(PathBuf),
 }
 
-pub enum EventKind {
-    Created,
-    Removed,
-    Renamed,
-    Moved,
-    Updated,
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Folder {
+    Created(PathBuf),
+    Removed(PathBuf),
+    Renamed { from: PathBuf, to: PathBuf },
+    Moved { from: PathBuf, to: PathBuf },
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Any {
+    Removed(PathBuf),
 }
