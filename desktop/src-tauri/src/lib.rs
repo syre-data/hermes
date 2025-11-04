@@ -1,4 +1,6 @@
 use hermes_fs_daemon as fs_daemon;
+use std::sync::Arc;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,18 +18,55 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[cfg_attr(feature = "tracing", tracing::instrument(skip(app)))]
+#[derive(derive_more::Deref, Clone)]
+struct FsDaemonEventReceiver(Arc<tokio::sync::Mutex<fs_daemon::server::EventReceiver>>);
+impl FsDaemonEventReceiver {
+    pub fn new(event_rx: fs_daemon::server::EventReceiver) -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(event_rx)))
+    }
+}
+
+#[derive(derive_more::Deref, Clone)]
+struct FsDaemonCommandSender(Arc<tokio::sync::Mutex<fs_daemon::server::CommandSender>>);
+impl FsDaemonCommandSender {
+    pub fn new(command_tx: fs_daemon::server::CommandSender) -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(command_tx)))
+    }
+}
+
+/// Runs setup tasks:
+/// 1. Launches `fs_daemon`.
+/// 2. Registers event listeners.
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let fs_daemon = fs_daemon::server::Builder::new();
-    std::thread::Builder::new()
+    let (command_tx, command_rx) = fs_daemon::server::command_channel();
+    let (event_tx, event_rx) = fs_daemon::server::event_channel();
+    let mut daemon = fs_daemon::server::Daemon::new(event_tx, command_rx);
+
+    let daemon_handle = std::thread::Builder::new()
         .name("hermes desktop fs daemon".to_string())
-        .spawn(move || fs_daemon.run())
-        .unwrap();
+        .spawn(move || daemon.run())
+        .expect("could not launch fs daemon");
+
+    let event_rx = FsDaemonEventReceiver::new(event_rx);
+    app.manage(event_rx.clone());
+    app.manage(FsDaemonCommandSender::new(command_tx));
+    tauri::async_runtime::spawn(handle_fs_events(app.handle().clone()));
+    Ok(())
+}
+
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+async fn handle_fs_events(app: tauri::AppHandle) {
+    let event_rx = app.state::<FsDaemonEventReceiver>();
+    while let Some(events) = event_rx.lock().await.recv().await {
+        tracing::trace!(?events);
+    }
 }
 
 mod commands {
     use hermes_core as core;
     use hermes_desktop_lib as lib;
+    use hermes_fs_daemon as fs_daemon;
     use std::path::PathBuf;
     use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -46,10 +85,19 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn load_directory(
+    pub async fn load_directory(
+        fs_command_tx: tauri::State<'_, crate::FsDaemonCommandSender>,
         root: PathBuf,
     ) -> Result<lib::fs::DirectoryTree, lib::fs::error::FromFileSystem> {
-        lib::fs::DirectoryTree::from_file_system(root)
+        let res = lib::fs::DirectoryTree::from_file_system(&root);
+        if res.is_ok() {
+            fs_command_tx
+                .lock()
+                .await
+                .send(fs_daemon::server::Command::Watch(root))
+                .unwrap();
+        }
+        res
     }
 
     #[tauri::command]

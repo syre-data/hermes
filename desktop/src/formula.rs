@@ -227,7 +227,7 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
     let (error, set_error) = signal::<Option<&'static str>>(None);
 
     let save_formula = {
-        let workbooks = state.datasets;
+        let datasets = state.datasets;
         let formulas = state.formulas;
         let active_formula = state.active_formula;
         let formula = formula.clone();
@@ -245,7 +245,7 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
                         Ok(_expr) => {
                             set_error(None);
                             formula.value.set(input.to_string());
-                            sync_formula(&formula, &workbooks, &workspace_owner);
+                            sync_formula(&formula, &datasets, &workspace_owner);
                         }
                         Err(err) => {
                             let msg = match err {

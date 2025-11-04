@@ -1912,6 +1912,7 @@ name = "hermes"
 version = "0.0.1"
 dependencies = [
  "csv",
+ "derive_more 2.0.1",
  "hermes-core",
  "hermes-desktop-lib",
  "hermes-fs-daemon",
@@ -1963,8 +1964,10 @@ name = "hermes-fs-daemon"
 version = "0.0.1"
 dependencies = [
  "crossbeam",
+ "derive_more 2.0.1",
  "notify",
  "notify-debouncer-full",
+ "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",
