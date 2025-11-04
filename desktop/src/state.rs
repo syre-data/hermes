@@ -7,6 +7,10 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, sync::Arc};
 const CANVAS_ROWS_DEFAULT: core::data::IndexType = 100;
 const CANVAS_COLS_DEFAULT: core::data::IndexType = 26;
 
+pub trait FileResource {
+    fn file(&self) -> &ResourceId;
+}
+
 #[derive(Clone, derive_more::Deref, Hash, PartialEq, Eq, Debug)]
 pub struct ResourceId(uuid::Uuid);
 impl ResourceId {
@@ -45,7 +49,7 @@ impl WorkspaceOwner {
 }
 
 #[derive(Clone)]
-pub enum ActiveWorkbook {
+pub enum ActiveDataset {
     None,
     Some {
         id: ResourceId,
@@ -53,7 +57,7 @@ pub enum ActiveWorkbook {
     },
 }
 
-impl ActiveWorkbook {
+impl ActiveDataset {
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
@@ -120,8 +124,8 @@ pub struct State {
     pub directory_tree: DirectoryTree,
     /// Active resources.
     pub selected_files: RwSignal<Vec<ResourceId>>,
-    pub active_workbook: RwSignal<ActiveWorkbook>,
-    pub workbooks: Workbooks,
+    pub active_dataset: RwSignal<ActiveDataset>,
+    pub datasets: Datasets,
     pub formulas: Formulas,
     pub active_formula: RwSignal<Option<ResourceId>>,
     pub canvas: Canvas,
@@ -134,8 +138,8 @@ impl State {
             messages: RwSignal::new(vec![]),
             directory_tree: DirectoryTree::from_graph(directory_tree),
             selected_files: RwSignal::new(vec![]),
-            active_workbook: RwSignal::new(ActiveWorkbook::None),
-            workbooks: Workbooks::new(),
+            active_dataset: RwSignal::new(ActiveDataset::None),
+            datasets: Datasets::new(),
             formulas: Formulas::new(),
             active_formula: RwSignal::new(None),
             canvas: Canvas::new(CANVAS_ROWS_DEFAULT, CANVAS_COLS_DEFAULT),
@@ -148,10 +152,10 @@ impl State {
 }
 
 #[derive(Clone, Copy, derive_more::Deref)]
-pub struct Workbooks(RwSignal<Vec<Workbook>>);
-impl Workbooks {
+pub struct Datasets(RwSignal<Vec<Dataset>>);
+impl Datasets {
     pub fn new() -> Self {
-        Workbooks(RwSignal::new(vec![]))
+        Datasets(RwSignal::new(vec![]))
     }
 
     /// # Returns
@@ -159,14 +163,28 @@ impl Workbooks {
     pub fn size_fixed(&self) -> (core::data::IndexType, core::data::IndexType) {
         let mut max_rows = 0;
         let mut max_cols = 0;
-        for workbook in self.read_untracked().iter() {
-            for sheet in workbook.sheets.read_untracked().iter() {
-                let (rows, cols) = sheet.size_fixed();
-                if rows > max_rows {
-                    max_rows = rows
+        for dataset in self.read_untracked().iter() {
+            match dataset {
+                Dataset::Csv(csv) => {
+                    let (rows, cols) = csv.sheet.size_fixed();
+                    if rows > max_rows {
+                        max_rows = rows
+                    }
+                    if cols > max_cols {
+                        max_cols = cols
+                    }
                 }
-                if cols > max_cols {
-                    max_cols = cols
+
+                Dataset::Workbook(workbook) => {
+                    for sheet in workbook.sheets.read_untracked().iter() {
+                        let (rows, cols) = sheet.size_fixed();
+                        if rows > max_rows {
+                            max_rows = rows
+                        }
+                        if cols > max_cols {
+                            max_cols = cols
+                        }
+                    }
                 }
             }
         }
@@ -179,26 +197,26 @@ impl Workbooks {
         domain: &FormulaDomain,
     ) -> Vec<RwSignal<VariableCellValue>> {
         match domain {
-            FormulaDomain::Cell {
-                workbook,
-                sheet,
-                cell,
-            } => {
-                let Some(sheets) = self
+            FormulaDomain::CsvCell { dataset, cell } => {
+                let Some(dataset) = self
                     .0
                     .read_untracked()
                     .iter()
-                    .find_map(|wb| (wb.id() == workbook).then_some(wb.sheets.read_only()))
+                    .find(|ds| ds.id() == dataset)
+                    .cloned()
                 else {
                     return vec![];
                 };
-                let Some(cells) = sheets
-                    .read_untracked()
-                    .iter()
-                    .find_map(|s| (s.id() == sheet).then_some(s.cells.read_only()))
-                else {
+
+                let cells = match dataset {
+                    Dataset::Csv(csv) => Some(csv.sheet.cells.read_only()),
+
+                    Dataset::Workbook(workbook) => unreachable!(),
+                };
+                let Some(cells) = cells else {
                     return vec![];
                 };
+
                 cells
                     .read_untracked()
                     .get(cell)
@@ -208,6 +226,161 @@ impl Workbooks {
                     })
                     .unwrap_or(vec![])
             }
+
+            FormulaDomain::WorkbookCell {
+                dataset,
+                sheet,
+                cell,
+            } => {
+                let Some(dataset) = self
+                    .0
+                    .read_untracked()
+                    .iter()
+                    .find(|ds| ds.id() == dataset)
+                    .cloned()
+                else {
+                    return vec![];
+                };
+
+                let cells = match dataset {
+                    Dataset::Csv(csv) => unreachable!(),
+                    Dataset::Workbook(workbook) => workbook
+                        .sheets
+                        .read_untracked()
+                        .iter()
+                        .find_map(|s| (s.id() == sheet).then_some(s.cells.read_only())),
+                };
+                let Some(cells) = cells else {
+                    return vec![];
+                };
+
+                cells
+                    .read_untracked()
+                    .get(cell)
+                    .map(|cell| match cell {
+                        CellValue::Fixed(_) => vec![],
+                        CellValue::Variable(value) => vec![value.clone()],
+                    })
+                    .unwrap_or(vec![])
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum Dataset {
+    Csv(Csv),
+    Workbook(Workbook),
+}
+
+impl Dataset {
+    pub fn new(file: ResourceId, dataset: lib::data::Dataset) -> Self {
+        match dataset {
+            lib::data::Dataset::Csv(csv) => Self::Csv(Csv::new(file, csv)),
+            lib::data::Dataset::Workbook(workbook) => Self::Workbook(Workbook::new(file, workbook)),
+        }
+    }
+
+    pub fn id(&self) -> &ResourceId {
+        match self {
+            Self::Csv(csv) => csv.id(),
+            Self::Workbook(workbook) => workbook.id(),
+        }
+    }
+
+    pub fn is_csv(&self) -> bool {
+        matches!(self, Self::Csv(_))
+    }
+
+    pub fn is_workbook(&self) -> bool {
+        matches!(self, Self::Workbook(_))
+    }
+}
+
+impl FileResource for Dataset {
+    fn file(&self) -> &ResourceId {
+        match self {
+            Self::Csv(csv) => csv.file(),
+            Self::Workbook(workbook) => workbook.file(),
+        }
+    }
+}
+
+impl core::expr::Context for &Dataset {
+    fn cell_value(
+        self,
+        cell_ref: &hermes_core::data::CellRef,
+        origin: &hermes_core::data::CellPath,
+    ) -> Result<hermes_core::expr::Value, hermes_core::expr::ContextError> {
+        match self {
+            Dataset::Csv(csv) => csv.cell_value(cell_ref, origin),
+            Dataset::Workbook(workbook) => workbook.cell_value(cell_ref, origin),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Csv {
+    file: ResourceId,
+    inner: lib::data::Csv,
+    sheet: Spreadsheet,
+}
+
+impl Csv {
+    pub fn new(file: ResourceId, csv: lib::data::Csv) -> Self {
+        let cells = csv.sheet.cells().clone();
+        Self {
+            file,
+            inner: csv,
+            sheet: Spreadsheet::with_fixed_values("data", cells),
+        }
+    }
+
+    pub fn id(&self) -> &ResourceId {
+        &self.file
+    }
+
+    pub fn sheet(&self) -> &Spreadsheet {
+        &self.sheet
+    }
+}
+
+impl FileResource for Csv {
+    fn file(&self) -> &ResourceId {
+        &self.file
+    }
+}
+
+impl core::expr::Context for &Csv {
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
+    fn cell_value(
+        self,
+        cell_ref: &core::data::CellRef,
+        origin: &core::data::CellPath,
+    ) -> Result<core::expr::Value, core::expr::ContextError> {
+        let idx = core::data::CellIndex::new(cell_ref.row, cell_ref.col);
+        match self
+            .sheet
+            .cells
+            .with_untracked(|cells| cells.get(&idx).cloned())
+        {
+            None => {
+                return Ok(core::expr::Value::Empty);
+            }
+            Some(cell) => match cell {
+                CellValue::Fixed(data) => {
+                    return Ok(data);
+                }
+                CellValue::Variable(data) => match data.get_untracked() {
+                    VariableCellValue::Empty => return Ok(core::expr::Value::Empty),
+                    VariableCellValue::Formula(data) => match data {
+                        Err(err) => return Err(core::expr::ContextError::CellRefValueError(err)),
+                        Ok(data) => {
+                            return Ok(data);
+                        }
+                    },
+                },
+            },
         }
     }
 }
@@ -237,10 +410,6 @@ impl Workbook {
         }
     }
 
-    pub fn file(&self) -> &ResourceId {
-        &self.file
-    }
-
     /// Alias for [`Self::file`].
     ///
     /// # Returns
@@ -248,16 +417,11 @@ impl Workbook {
     pub fn id(&self) -> &ResourceId {
         &self.file
     }
+}
 
-    pub fn kind(&self) -> lib::data::WorkbookKind {
-        self.inner.with_untracked(|wb| wb.kind())
-    }
-
-    pub fn is_csv(&self) -> bool {
-        self.inner.with_untracked(|wb| {
-            let kind = wb.kind();
-            matches!(lib::data::WorkbookKind::Csv, kind)
-        })
+impl FileResource for Workbook {
+    fn file(&self) -> &ResourceId {
+        &self.file
     }
 }
 
@@ -298,9 +462,6 @@ impl core::expr::Context for &Workbook {
             }
             Some(cell) => match cell {
                 CellValue::Fixed(data) => {
-                    // return data
-                    //     .try_into()
-                    //     .map_err(core::expr::ContextError::CellRefValueError);
                     return Ok(data);
                 }
                 CellValue::Variable(data) => match data.get_untracked() {
@@ -308,9 +469,6 @@ impl core::expr::Context for &Workbook {
                     VariableCellValue::Formula(data) => match data {
                         Err(err) => return Err(core::expr::ContextError::CellRefValueError(err)),
                         Ok(data) => {
-                            // return data
-                            //     .try_into()
-                            //     .map_err(core::expr::ContextError::CellRefValueError);
                             return Ok(data);
                         }
                     },
@@ -489,9 +647,15 @@ impl Formula {
 
 #[derive(Clone, PartialEq)]
 pub enum FormulaDomain {
-    /// A single cell.
-    Cell {
-        workbook: ResourceId,
+    /// A single cell in a csv.
+    CsvCell {
+        dataset: ResourceId,
+        cell: core::data::CellIndex,
+    },
+
+    /// A single cell in a workbook.
+    WorkbookCell {
+        dataset: ResourceId,
         sheet: ResourceId,
         cell: core::data::CellIndex,
     },
@@ -501,14 +665,20 @@ impl FormulaDomain {
     /// Test if the domain intersects with the given domain.
     pub fn intersects(&self, domain: &Self) -> bool {
         match (self, domain) {
-            (Self::Cell { .. }, Self::Cell { .. }) => self == domain,
+            (Self::CsvCell { .. }, Self::CsvCell { .. }) => self == domain,
+            (Self::WorkbookCell { .. }, Self::WorkbookCell { .. }) => self == domain,
+            (Self::CsvCell { .. }, Self::WorkbookCell { .. }) => false,
+            (Self::WorkbookCell { .. }, Self::CsvCell { .. }) => false,
         }
     }
 
     /// Test if the domain fully contains the given domain.
     pub fn contains(&self, domain: &Self) -> bool {
         match (self, domain) {
-            (Self::Cell { .. }, Self::Cell { .. }) => self == domain,
+            (Self::CsvCell { .. }, Self::CsvCell { .. }) => self == domain,
+            (Self::WorkbookCell { .. }, Self::WorkbookCell { .. }) => self == domain,
+            (Self::CsvCell { .. }, Self::WorkbookCell { .. }) => false,
+            (Self::WorkbookCell { .. }, Self::CsvCell { .. }) => false,
         }
     }
 }

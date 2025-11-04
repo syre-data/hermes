@@ -1,4 +1,3 @@
-use ::core::error;
 use hermes_core as core;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -66,6 +65,13 @@ impl Spreadsheet {
     /// Sets the value of a cell.
     /// If a value already existed in the cell it is overwritten.
     pub fn set(&mut self, idx: core::data::CellIndex, value: Data) {
+        if idx.row() >= self.size.0 {
+            self.size.0 = idx.row() + 1;
+        }
+        if idx.col() >= self.size.1 {
+            self.size.1 = idx.col() + 1;
+        }
+
         self.cells.insert(idx, value);
     }
 
@@ -78,6 +84,13 @@ impl Spreadsheet {
     ) -> Result<(), error::CellNotEmpty> {
         if self.cells.contains_key(&idx) {
             return Err(error::CellNotEmpty);
+        }
+
+        if idx.row() >= self.size.0 {
+            self.size.0 = idx.row() + 1;
+        }
+        if idx.col() >= self.size.1 {
+            self.size.1 = idx.col() + 1;
         }
 
         self.cells.insert(idx, value);
@@ -94,7 +107,7 @@ pub struct SpreadsheetRowIter<'a> {
 
 impl<'a> SpreadsheetRowIter<'a> {
     pub fn new(sheet: &'a Spreadsheet) -> Self {
-        (rows, cols) = sheet.size();
+        let (rows, cols) = sheet.size();
         Self {
             sheet,
             rows,
@@ -112,10 +125,10 @@ impl<'a> std::iter::Iterator for SpreadsheetRowIter<'a> {
             return None;
         }
 
-        let mut row = vec![Data::Empty; self.cols];
+        let mut row = vec![&Data::Empty; self.cols as usize];
         for (idx, data) in self.sheet.cells.iter() {
             if idx.row() == self.next_row {
-                row[idx.col()] = data;
+                row[idx.col() as usize] = data;
             }
         }
         self.next_row += 1;
@@ -124,16 +137,77 @@ impl<'a> std::iter::Iterator for SpreadsheetRowIter<'a> {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Csv {
+    pub sheet: Spreadsheet,
+}
+
+#[cfg(feature = "fs")]
+impl Csv {
+    pub fn from_csv_reader(reader: csv::Reader<fs::File>) -> Result<Self, error::LoadCsv> {
+        reader.try_into()
+    }
+
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, error::LoadCsv> {
+        let mut cells = CellMap::new();
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_path(path)?;
+
+        reader.try_into()
+    }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), error::SaveCsv> {
+        let tmp_file =
+            tempfile::NamedTempFile::new().map_err(|err| error::SaveCsv::Io(err.kind()))?;
+        let mut wtr = csv::Writer::from_path(tmp_file.path())?;
+        for row in self.sheet.iter_rows() {
+            let row_str = row
+                .into_iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>();
+
+            wtr.write_record(row_str)?;
+        }
+
+        fs::rename(tmp_file.path(), path).map_err(|err| error::SaveCsv::Io(err.kind()))?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fs")]
+impl TryFrom<csv::Reader<fs::File>> for Csv {
+    type Error = error::LoadCsv;
+
+    fn try_from(mut reader: csv::Reader<fs::File>) -> Result<Self, Self::Error> {
+        let mut cells = CellMap::new();
+        for (row, result) in reader.records().enumerate() {
+            let record = result.expect("result is valid");
+            if row > core::data::IndexType::MAX.into() {
+                return Err(error::LoadCsv::DataTooLarge);
+            }
+
+            for (col, value) in record.into_iter().enumerate() {
+                if col > core::data::IndexType::MAX.into() {
+                    return Err(error::LoadCsv::DataTooLarge);
+                }
+
+                let idx = (row as core::data::IndexType, col as core::data::IndexType);
+                let value = str_value_to_data(value);
+                let _ = cells.insert(idx.into(), value);
+            }
+        }
+
+        let sheet = Spreadsheet::from_cells(cells);
+        Ok(Self { sheet })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Workbook {
     sheets: Vec<(String, Spreadsheet)>,
-    kind: WorkbookKind,
 }
 
 impl Workbook {
-    pub fn kind(&self) -> WorkbookKind {
-        self.kind
-    }
-
     pub fn sheet_names(&self) -> Vec<&String> {
         self.sheets.iter().map(|(name, _)| name).collect()
     }
@@ -157,74 +231,20 @@ impl Workbook {
 
 #[cfg(feature = "fs")]
 impl Workbook {
-    pub fn from_csv_reader(reader: csv::Reader<fs::File>) -> Result<Self, error::LoadCsv> {
-        reader.try_into()
-    }
-
-    pub fn load_csv_from_path(path: impl AsRef<Path>) -> Result<Self, error::LoadCsv> {
-        let mut cells = CellMap::new();
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .from_path(path)?;
-
-        reader.try_into()
-    }
-
-    pub fn load_excel_from_path(path: impl AsRef<Path>) -> Result<Self, error::LoadExcel> {
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, error::LoadExcel> {
+        // TODO: currently just a placeholder
         let cells = CellMap::new();
         let sheet = Spreadsheet::from_cells(cells);
         Ok(Self {
             sheets: vec![("".into(), sheet)],
-            kind: WorkbookKind::Workbook,
-        })
-    }
-
-    pub fn to_csv(&self, path: impl AsRef<Path>) -> Result<(), error::Save> {
-        if self.sheets.len() > 1 {
-            return Err(error::SaveCsv::MultipleSheets.into());
-        }
-
-        let mut wtr = csv::Writer::from_path(path)?;
-        let (_, sheet) = &self.sheets[0];
-        for row in sheet.iter_rows() {
-            wtr.write_record(row)?;
-        }
-    }
-}
-
-impl TryFrom<csv::Reader> for Workbook {
-    type Error = error::LoadCsv;
-
-    fn try_from(value: csv::Reader<fs::File>) -> Result<Self, Self::Error> {
-        for (row, result) in reader.records().enumerate() {
-            let record = result.expect("result is valid");
-            if row > core::data::IndexType::MAX.into() {
-                return Err(error::LoadCsv::TooLarge);
-            }
-
-            for (col, value) in record.into_iter().enumerate() {
-                if col > core::data::IndexType::MAX.into() {
-                    return Err(error::LoadCsv::TooLarge);
-                }
-
-                let idx = (row as core::data::IndexType, col as core::data::IndexType);
-                let value = str_value_to_data(value);
-                let _ = cells.insert(idx.into(), value);
-            }
-        }
-
-        let sheet = Spreadsheet::from_cells(cells);
-        Ok(Self {
-            sheets: vec![("data".into(), sheet)],
-            kind: WorkbookKind::Csv,
         })
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
-pub enum WorkbookKind {
-    Csv,
-    Workbook,
+#[derive(Serialize, Deserialize, Clone, Debug, derive_more::From)]
+pub enum Dataset {
+    Csv(Csv),
+    Workbook(Workbook),
 }
 
 fn str_value_to_data(value: &str) -> Data {
@@ -245,6 +265,7 @@ pub mod error {
     use serde::{Deserialize, Serialize};
     use std::io;
 
+    #[derive(Debug)]
     pub struct CellNotEmpty;
 
     #[derive(Serialize, Deserialize, Debug, thiserror::Error, Clone, derive_more::From)]
@@ -257,13 +278,11 @@ pub mod error {
 
     #[derive(Serialize, Deserialize, Debug, thiserror::Error, Clone, derive_more::From)]
     pub enum SaveCsv {
-        /// A workbook with multiple sheets can not be saved as a csv.
-        #[error("a workbook with multiple sheets can not be saved as a csv")]
-        MultipleSheets,
         #[error("{0}")]
         Io(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
     }
 
+    #[cfg(feature = "fs")]
     impl From<csv::Error> for SaveCsv {
         fn from(value: csv::Error) -> Self {
             use csv::ErrorKind;
@@ -305,9 +324,10 @@ pub mod error {
         #[error("{0}")]
         Io(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
         #[error("data is too large")]
-        TooLarge,
+        DataTooLarge,
     }
 
+    #[cfg(feature = "fs")]
     impl From<csv::Error> for LoadCsv {
         fn from(value: csv::Error) -> Self {
             use csv::ErrorKind;

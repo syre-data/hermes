@@ -37,6 +37,7 @@ pub struct UpdateWorkbook {
 }
 
 pub mod error {
+    use crate::data;
     use serde::{Deserialize, Serialize};
     use std::io;
 
@@ -45,6 +46,26 @@ pub mod error {
     pub enum WorkspaceOrder {
         /// The task could not be completed.
         TaskNotCompleted,
-        CouldNotOpenFile(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
+        /// File could not be opened.
+        OpenFile(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
+        /// File could not be saved.
+        Save(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
+    }
+
+    impl From<data::error::LoadCsv> for WorkspaceOrder {
+        fn from(value: data::error::LoadCsv) -> Self {
+            match value {
+                data::error::LoadCsv::Io(err) => Self::OpenFile(err),
+                data::error::LoadCsv::DataTooLarge => todo!(),
+            }
+        }
+    }
+
+    impl From<data::error::SaveCsv> for WorkspaceOrder {
+        fn from(value: data::error::SaveCsv) -> Self {
+            match value {
+                data::error::SaveCsv::Io(err) => Self::Save(err),
+            }
+        }
     }
 }

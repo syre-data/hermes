@@ -1,3 +1,5 @@
+use hermes_fs_daemon as fs_daemon;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -6,11 +8,21 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::select_folder,
             commands::load_directory,
-            commands::load_workbook,
+            commands::load_dataset,
             commands::run_workspace,
         ])
+        .setup(setup)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg_attr(feature = "tracing", tracing::instrument(skip(app)))]
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let fs_daemon = fs_daemon::server::Builder::new();
+    std::thread::Builder::new()
+        .name("hermes desktop fs daemon".to_string())
+        .spawn(move || fs_daemon.run())
+        .unwrap();
 }
 
 mod commands {
@@ -41,8 +53,8 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn load_workbook(path: PathBuf) -> Result<lib::data::Workbook, lib::data::error::Load> {
-        use lib::data::Workbook;
+    pub fn load_dataset(path: PathBuf) -> Result<lib::data::Dataset, lib::data::error::Load> {
+        use lib::data::Dataset;
 
         let file_kind = if let Some(ext) = path.extension().map(|ext| ext.to_str()).flatten() {
             match ext {
@@ -55,14 +67,18 @@ mod commands {
         };
 
         match file_kind {
-            FileKind::Csv => Workbook::load_csv_from_path(&path).map_err(|err| err.into()),
-            FileKind::Excel => Workbook::load_excel_from_path(&path).map_err(|err| err.into()),
-            FileKind::Unknown => match Workbook::load_csv_from_path(&path) {
-                Ok(workbook) => Ok(workbook),
+            FileKind::Csv => lib::data::Csv::load_from_path(&path)
+                .map(|csv| csv.into())
+                .map_err(|err| err.into()),
+            FileKind::Excel => lib::data::Workbook::load_from_path(&path)
+                .map(|workbook| workbook.into())
+                .map_err(|err| err.into()),
+            FileKind::Unknown => match lib::data::Csv::load_from_path(&path) {
+                Ok(csv) => Ok(csv.into()),
                 Err(csv_err) => match csv_err {
                     lib::data::error::LoadCsv::Io(_) => Err(csv_err.into()),
-                    _ => match Workbook::load_excel_from_path(&path) {
-                        Ok(workbook) => Ok(workbook),
+                    _ => match lib::data::Workbook::load_from_path(&path) {
+                        Ok(workbook) => Ok(workbook.into()),
                         Err(_) => Err(lib::data::error::Load::InvalidFileType),
                     },
                 },
@@ -149,22 +165,29 @@ mod commands {
         }
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(level = "trace"))]
     async fn run_workspace_order_update_csv(
         path: PathBuf,
         updates: Vec<lib::formula::UpdateCsv>,
     ) -> Result<(), lib::formula::error::WorkspaceOrder> {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("processing orders");
+
         let file = tokio::fs::File::open(&path)
             .await
-            .map_err(|err| lib::formula::error::WorkspaceOrder::CouldNotOpenFile(err.kind()))?;
+            .map_err(|err| lib::formula::error::WorkspaceOrder::OpenFile(err.kind()))?
+            .into_std()
+            .await;
         let rdr = csv::Reader::from_reader(file);
-        let mut workbook = lib::data::Workbook::from_csv_reader(rdr)?;
-        let mut sheet = workbook.get_sheet_mut(0).expect("sheet should exist");
+        let mut csv = lib::data::Csv::from_csv_reader(rdr)?;
         for update in updates {
             let idx = core::data::CellIndex::new(update.row, update.col);
-            sheet.insert(idx, value).expect("cell should be empty");
+            csv.sheet
+                .insert(idx, update.value)
+                .expect("cell should be empty");
         }
 
-        workbook.to_csv(&path)?;
+        csv.save(&path)?;
         Ok(())
     }
 

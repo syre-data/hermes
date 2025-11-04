@@ -33,7 +33,7 @@ mod output {
 }
 
 mod active {
-    use crate::{LEVEL_PAD, LEVEL_PAD_UNIT, icon, state, types};
+    use crate::{LEVEL_PAD, LEVEL_PAD_UNIT, icon, state, state::FileResource, types};
     use hermes_desktop_lib as lib;
     use leptos::{ev, prelude::*};
     use leptos_icons::Icon;
@@ -79,7 +79,7 @@ mod active {
         };
 
         let is_active = {
-            let active = state.active_workbook.read_only();
+            let active = state.active_dataset.read_only();
             let id = file.id().clone();
             move || {
                 active
@@ -92,7 +92,7 @@ mod active {
 
         let activate = {
             let id = file.id().clone();
-            let active = state.active_workbook;
+            let active = state.active_dataset;
             move |e: ev::MouseEvent| {
                 if e.button() != types::MouseButton::Primary {
                     return;
@@ -110,9 +110,9 @@ mod active {
         };
 
         let remove = {
-            let workbooks = state.workbooks;
+            let workbooks = state.datasets;
             let selected = state.selected_files;
-            let active = state.active_workbook;
+            let active = state.active_dataset;
             let id = file.id().clone();
             move |e: ev::MouseEvent| {
                 if e.button() != types::MouseButton::Primary {
@@ -151,7 +151,7 @@ mod active {
                 selected.update(|selected| {
                     selected.retain(|rid| *rid != id);
                 });
-                workbooks.update(|workbooks| workbooks.retain(|workbook| *workbook.file() != id));
+                workbooks.update(|datasets| datasets.retain(|dataset| *dataset.file() != id));
             }
         };
 
@@ -220,13 +220,19 @@ mod nav {
     fn ProjectRoot() -> impl IntoView {
         let state = expect_context::<state::State>();
 
+        let root_path = state.root_path().to_string_lossy().to_string();
+
         let root = state.directory_tree.root();
         let name = {
             let name = root.name.read_only();
             move || name.with(|name| name.to_string_lossy().to_string())
         };
 
-        view! { <div class="font-bold uppercase">{name}</div> }
+        view! {
+            <div class="font-bold uppercase" title=root_path>
+                {name}
+            </div>
+        }
     }
 
     #[component]
@@ -256,6 +262,7 @@ mod nav {
                 </div>
             </div>
         }
+        .into_any()
     }
 
     #[component]
@@ -348,39 +355,40 @@ mod nav {
     #[component]
     fn FileContent(file: state::File) -> impl IntoView {
         let state = expect_context::<state::State>();
-        let load_wb_action_abort_handle = expect_context::<state::LoadWorkbookActionAbortHandle>();
+        let load_dataset_action_abort_handle =
+            expect_context::<state::LoadWorkbookActionAbortHandle>();
 
-        let try_load_workbook = Action::new_local({
+        let try_load_dataset = Action::new_local({
             let directory_tree = state.directory_tree.clone();
             let root_path = state.root_path().clone();
-            let workbooks = state.workbooks;
+            let datasets = state.datasets;
             let selected = state.selected_files;
-            let active = state.active_workbook;
+            let active = state.active_dataset;
             let messages = state.messages;
-            let id = file.id().clone();
+            let file_id = file.id().clone();
             move |_| {
                 let directory_tree = directory_tree.clone();
                 let root_path = root_path.clone();
-                let id = id.clone();
+                let file_id = file_id.clone();
                 async move {
-                    let path = directory_tree.get_file_path(&id).expect("file exists");
+                    let path = directory_tree.get_file_path(&file_id).expect("file exists");
                     let path = root_path.join(path);
-                    match load_workbook(path).await {
-                        Ok(workbook) => {
-                            workbooks
+                    match load_dataset(path).await {
+                        Ok(dataset) => {
+                            datasets
                                 .write()
-                                .push(state::Workbook::new(id.clone(), workbook));
+                                .push(state::Dataset::new(file_id.clone(), dataset));
 
-                            if !selected.read_untracked().contains(&id) {
-                                selected.write().push(id.clone());
+                            if !selected.read_untracked().contains(&file_id) {
+                                selected.write().push(file_id.clone());
                             }
                             if active
                                 .read_untracked()
                                 .as_ref()
-                                .map(|active| *active != id)
+                                .map(|active| *active != file_id)
                                 .unwrap_or(true)
                             {
-                                active.write().insert(id.clone());
+                                active.write().insert(file_id.clone());
                             }
                         }
                         Err(err) => {
@@ -393,7 +401,7 @@ mod nav {
                                         hermes_desktop_lib::data::error::LoadCsv::Io(err) => {
                                             io_error_message(err)
                                         }
-                                        hermes_desktop_lib::data::error::LoadCsv::TooLarge => {
+                                        hermes_desktop_lib::data::error::LoadCsv::DataTooLarge => {
                                             "File too large."
                                         }
                                     },
@@ -415,28 +423,28 @@ mod nav {
             }
         });
 
-        let dispatch_load_workbook = {
-            let try_load_wb_pending = try_load_workbook.pending();
-            let mut wb_abort_handle = load_wb_action_abort_handle.clone();
+        let dispatch_load_dataset = {
+            let try_load_dataset_pending = try_load_dataset.pending();
+            let mut dataset_abort_handle = load_dataset_action_abort_handle.clone();
             move |e: ev::MouseEvent| {
                 if e.button() != types::MouseButton::Primary {
                     return;
                 }
-                if try_load_wb_pending.get_untracked() {
+                if try_load_dataset_pending.get_untracked() {
                     return;
                 }
 
-                if let Some(other_pending) = wb_abort_handle.take() {
+                if let Some(other_pending) = dataset_abort_handle.take() {
                     other_pending.abort();
                 }
-                let abort_handle = try_load_workbook.dispatch(());
-                wb_abort_handle.insert(abort_handle);
+                let abort_handle = try_load_dataset.dispatch(());
+                dataset_abort_handle.insert(abort_handle);
             }
         };
 
-        let abort_load_workbook = {
-            let pending = try_load_workbook.pending();
-            let mut abort_handle = load_wb_action_abort_handle.clone();
+        let abort_load_dataset = {
+            let pending = try_load_dataset.pending();
+            let mut abort_handle = load_dataset_action_abort_handle.clone();
             move |e: ev::MouseEvent| {
                 if e.button() != types::MouseButton::Primary {
                     return;
@@ -456,11 +464,11 @@ mod nav {
         };
 
         view! {
-            <div on:mousedown=dispatch_load_workbook class="flex">
+            <div on:mousedown=dispatch_load_dataset class="flex">
                 <div class="grow">{name}</div>
                 {
-                    let wb_load_pending = try_load_workbook.pending();
-                    let abort_load_workbook = abort_load_workbook.clone();
+                    let wb_load_pending = try_load_dataset.pending();
+                    let abort_load_dataset = abort_load_dataset.clone();
                     move || {
                         wb_load_pending
                             .get()
@@ -468,7 +476,7 @@ mod nav {
                                 view! {
                                     <div>
                                         <button
-                                            on:mousedown=abort_load_workbook.clone()
+                                            on:mousedown=abort_load_dataset.clone()
                                             class="cursor-pointer"
                                         >
                                             <span class="block animate-spin">
@@ -484,13 +492,13 @@ mod nav {
         }
     }
 
-    async fn load_workbook(path: PathBuf) -> Result<lib::data::Workbook, lib::data::error::Load> {
+    async fn load_dataset(path: PathBuf) -> Result<lib::data::Dataset, lib::data::error::Load> {
         #[derive(serde::Serialize)]
         struct Args {
             path: PathBuf,
         }
 
-        tauri_sys::core::invoke_result("load_workbook", Args { path }).await
+        tauri_sys::core::invoke_result("load_dataset", Args { path }).await
     }
 
     fn io_error_message(err: io::ErrorKind) -> &'static str {
@@ -504,36 +512,11 @@ mod nav {
             io::ErrorKind::FileTooLarge => "File is too large.",
             io::ErrorKind::InvalidFilename => "Invalid file name.",
             io::ErrorKind::UnexpectedEof => "Unexpected end of file.",
-            io::ErrorKind::ConnectionRefused => todo!(),
-            io::ErrorKind::ConnectionReset => todo!(),
-            io::ErrorKind::HostUnreachable => todo!(),
-            io::ErrorKind::NetworkUnreachable => todo!(),
-            io::ErrorKind::ConnectionAborted => todo!(),
-            io::ErrorKind::NotConnected => todo!(),
-            io::ErrorKind::AddrInUse => todo!(),
-            io::ErrorKind::AddrNotAvailable => todo!(),
-            io::ErrorKind::NetworkDown => todo!(),
-            io::ErrorKind::BrokenPipe => todo!(),
-            io::ErrorKind::WouldBlock => todo!(),
-            io::ErrorKind::ReadOnlyFilesystem => todo!(),
-            io::ErrorKind::StaleNetworkFileHandle => todo!(),
-            io::ErrorKind::InvalidInput => todo!(),
-            io::ErrorKind::InvalidData => todo!(),
-            io::ErrorKind::TimedOut => todo!(),
-            io::ErrorKind::WriteZero => todo!(),
-            io::ErrorKind::StorageFull => todo!(),
-            io::ErrorKind::NotSeekable => todo!(),
-            io::ErrorKind::QuotaExceeded => todo!(),
-            io::ErrorKind::ResourceBusy => todo!(),
-            io::ErrorKind::ExecutableFileBusy => todo!(),
-            io::ErrorKind::Deadlock => todo!(),
-            io::ErrorKind::CrossesDevices => todo!(),
-            io::ErrorKind::TooManyLinks => todo!(),
-            io::ErrorKind::ArgumentListTooLong => todo!(),
-            io::ErrorKind::Interrupted => todo!(),
-            io::ErrorKind::Unsupported => todo!(),
-            io::ErrorKind::OutOfMemory => todo!(),
-            io::ErrorKind::Other | _ => "Unknown.",
+            io::ErrorKind::Other => "Unknown.",
+            err => {
+                tracing::warn!(?err);
+                "Unknown."
+            }
         }
     }
 }

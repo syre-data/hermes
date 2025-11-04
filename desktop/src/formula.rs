@@ -1,4 +1,4 @@
-use crate::{icon, state, types, workbook};
+use crate::{dataset, icon, state, types};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
 use leptos::{either::Either, ev, html, prelude::*};
@@ -29,34 +29,37 @@ fn Formula(formula: state::Formula) -> impl IntoView {
 
     let domain = formula.domain.read_only();
     let title = {
-        let workbooks = state.workbooks;
+        let datasets = state.datasets;
         move || {
             domain.with(|domain| match domain {
-                state::FormulaDomain::Cell {
-                    workbook,
+                state::FormulaDomain::CsvCell { dataset, cell } => cell.to_string(),
+
+                state::FormulaDomain::WorkbookCell {
+                    dataset,
                     sheet,
                     cell,
                 } => {
-                    let workbook = workbooks
+                    let dataset = datasets
                         .read_untracked()
                         .iter()
-                        .find(|wb| wb.id() == workbook)
-                        .expect("workbook to exist")
+                        .find(|ds| ds.id() == dataset)
+                        .expect("dataset to exist")
                         .clone();
 
-                    if workbook.is_csv() {
-                        cell.to_string()
-                    } else {
-                        let sheet_name = workbook
-                            .sheets
-                            .read_untracked()
-                            .iter()
-                            .find_map(|wb_sheet| {
-                                (wb_sheet.id() == sheet).then_some(wb_sheet.name.read_only())
-                            })
-                            .expect("sheet to exist");
+                    match dataset {
+                        state::Dataset::Csv(_) => unreachable!(),
+                        state::Dataset::Workbook(workbook) => {
+                            let sheet_name = workbook
+                                .sheets
+                                .read_untracked()
+                                .iter()
+                                .find_map(|wb_sheet| {
+                                    (wb_sheet.id() == sheet).then_some(wb_sheet.name.read_only())
+                                })
+                                .expect("sheet to exist");
 
-                        format!("{}!{cell}", sheet_name.get())
+                            format!("{}!{cell}", sheet_name.get())
+                        }
                     }
                 }
             })
@@ -67,8 +70,13 @@ fn Formula(formula: state::Formula) -> impl IntoView {
         let directory_tree = state.directory_tree;
         move || {
             domain.with(|domain| match domain {
-                state::FormulaDomain::Cell { workbook, .. } => directory_tree
-                    .get_file_path(workbook)
+                state::FormulaDomain::CsvCell { dataset, .. } => directory_tree
+                    .get_file_path(dataset)
+                    .expect("file to exist")
+                    .to_string_lossy()
+                    .to_string(),
+                state::FormulaDomain::WorkbookCell { dataset, .. } => directory_tree
+                    .get_file_path(dataset)
                     .expect("file to exist")
                     .to_string_lossy()
                     .to_string(),
@@ -219,7 +227,7 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
     let (error, set_error) = signal::<Option<&'static str>>(None);
 
     let save_formula = {
-        let workbooks = state.workbooks;
+        let workbooks = state.datasets;
         let formulas = state.formulas;
         let active_formula = state.active_formula;
         let formula = formula.clone();
@@ -264,25 +272,27 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
     let title = {
         let domain = formula.domain.read_only();
         let directory_tree = state.directory_tree.clone();
-        let workbooks = state.workbooks;
+        let datasets = state.datasets;
         move || match domain.get() {
-            state::FormulaDomain::Cell {
-                workbook,
+            state::FormulaDomain::CsvCell { dataset, cell } => cell.to_string(),
+
+            state::FormulaDomain::WorkbookCell {
+                dataset,
                 sheet,
                 cell,
             } => {
                 let file = directory_tree
-                    .get_file_by_id(&workbook)
+                    .get_file_by_id(&dataset)
                     .expect("file to exist");
-                let workbook = workbooks
+                let dataset = datasets
                     .read()
                     .iter()
-                    .find(|wb| *wb.id() == workbook)
-                    .expect("workbook to exist")
+                    .find(|ds| *ds.id() == dataset)
+                    .expect("dataset to exist")
                     .clone();
-                match workbook.kind() {
-                    lib::data::WorkbookKind::Csv => cell.to_string(),
-                    lib::data::WorkbookKind::Workbook => {
+                match dataset {
+                    state::Dataset::Csv(_) => unreachable!(),
+                    state::Dataset::Workbook(workbook) => {
                         let sheet_name = workbook
                             .sheets
                             .read()
@@ -327,34 +337,90 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
 /// Creates a new cell if needed.
 fn sync_formula(
     formula: &state::Formula,
-    workbooks: &state::Workbooks,
+    datasets: &state::Datasets,
     owner: &state::WorkspaceOwner,
 ) {
     formula.domain.with_untracked(|domain| match domain {
-        state::FormulaDomain::Cell {
-            workbook,
-            sheet,
-            cell,
-        } => workbooks.with_untracked(|workbooks| {
-            let workbook = workbooks
+        state::FormulaDomain::CsvCell { dataset, cell } => datasets.with_untracked(|datasets| {
+            let dataset = datasets
                 .iter()
-                .find(|wb| wb.id() == workbook)
-                .expect("workbook should exist");
-            let (sheet_idx, cells) = workbook
-                .sheets
-                .read_untracked()
-                .iter()
-                .enumerate()
-                .find_map(|(idx, s)| (s.id() == sheet).then_some((idx, s.cells)))
-                .expect("sheet should exist");
+                .find(|ds| ds.id() == dataset)
+                .expect("dataset should exist");
 
-            let origin = core::data::CellPath {
-                sheet: sheet_idx as core::data::IndexType,
-                row: cell.row(),
-                col: cell.col(),
+            let (cells, origin) = match dataset {
+                state::Dataset::Csv(csv) => (
+                    csv.sheet().cells,
+                    core::data::CellPath {
+                        sheet: 0,
+                        row: cell.row(),
+                        col: cell.col(),
+                    },
+                ),
+                state::Dataset::Workbook(workbook) => unreachable!(),
             };
 
-            let value = core::expr::eval(formula.value.get_untracked(), workbook, &origin);
+            let value = core::expr::eval(formula.value.get_untracked(), dataset, &origin);
+            if cells.with_untracked(|cells| cells.contains_key(cell)) {
+                cells.with_untracked(|cells| {
+                    let state::CellValue::Variable(cell) = cells.get(cell).expect("cell to exist")
+                    else {
+                        panic!("expected a variable cell");
+                    };
+                    cell.set(state::VariableCellValue::Formula(
+                        value.map(|value| value.into()),
+                    ));
+                });
+            } else {
+                cells.update(|cells| {
+                    let state::CellValue::Variable(cell) =
+                        cells
+                            .entry(cell.clone())
+                            .or_insert(state::CellValue::Variable(
+                                owner.with(|| RwSignal::new(state::VariableCellValue::Empty)),
+                            ))
+                    else {
+                        panic!("expected a formula cell");
+                    };
+                    cell.set(state::VariableCellValue::Formula(
+                        value.map(|value| value.into()),
+                    ));
+                });
+            }
+        }),
+
+        state::FormulaDomain::WorkbookCell {
+            dataset,
+            sheet,
+            cell,
+        } => datasets.with_untracked(|datasets| {
+            let dataset = datasets
+                .iter()
+                .find(|ds| ds.id() == dataset)
+                .expect("dataset should exist");
+
+            let (cells, origin) = match dataset {
+                state::Dataset::Csv(csv) => unreachable!(),
+                state::Dataset::Workbook(workbook) => {
+                    let (sheet_idx, cells) = workbook
+                        .sheets
+                        .read_untracked()
+                        .iter()
+                        .enumerate()
+                        .find_map(|(idx, s)| (s.id() == sheet).then_some((idx, s.cells)))
+                        .expect("sheet should exist");
+
+                    (
+                        cells,
+                        core::data::CellPath {
+                            sheet: sheet_idx as core::data::IndexType,
+                            row: cell.row(),
+                            col: cell.col(),
+                        },
+                    )
+                }
+            };
+
+            let value = core::expr::eval(formula.value.get_untracked(), dataset, &origin);
             if cells.with_untracked(|cells| cells.contains_key(cell)) {
                 cells.with_untracked(|cells| {
                     let state::CellValue::Variable(cell) = cells.get(cell).expect("cell to exist")

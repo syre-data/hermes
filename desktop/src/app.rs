@@ -1,4 +1,4 @@
-use crate::{component, explorer, formula, icon, message, state, types, workbook};
+use crate::{component, dataset, explorer, formula, icon, message, state, types};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
 use leptos::{either::Either, ev, prelude::*};
@@ -116,7 +116,7 @@ fn WorkspaceView(root: PathBuf, graph: lib::fs::DirectoryTree) -> impl IntoView 
         <div class="flex flex-col h-full">
             <div class="grow flex h-full">
                 <div class="grow min-w-0 h-full">
-                    <workbook::Workspace />
+                    <dataset::Workspace />
                 </div>
                 <component::ResizablePane>
                     <run::Run />
@@ -158,11 +158,11 @@ async fn load_directory(
 }
 
 mod run {
-    use crate::{state, types};
+    use crate::{state, state::FileResource, types};
     use hermes_core as core;
     use hermes_desktop_lib as lib;
     use leptos::{ev, prelude::*};
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
 
     #[component]
     pub fn Run() -> impl IntoView {
@@ -191,8 +191,9 @@ mod run {
             }
 
             match formulas_to_workspace_orders(
+                state.root_path().clone(),
                 state.formulas,
-                state.workbooks,
+                state.datasets,
                 state.directory_tree.clone(),
             ) {
                 Ok(orders) => {
@@ -232,27 +233,26 @@ mod run {
     }
 
     fn formulas_to_workspace_orders(
+        root_path: PathBuf,
         formulas: state::Formulas,
-        workbooks: state::Workbooks,
+        datasets: state::Datasets,
         directory_tree: state::DirectoryTree,
     ) -> Result<Vec<lib::formula::WorkspaceOrder>, Vec<error::InvalidCellValue>> {
-        let (orders, errors) = sort_formulas_by_workbook(formulas.get_untracked())
+        let (orders, errors) = sort_formulas_by_dataset(formulas.get_untracked())
             .into_iter()
-            .map(|(wb_id, formulas)| {
-                let workbook = workbooks
+            .map(|(ds_id, formulas)| {
+                let dataset = datasets
                     .read_untracked()
                     .iter()
-                    .find(|wb| *wb.id() == wb_id)
-                    .expect("workbook should exist")
+                    .find(|ds| *ds.id() == ds_id)
+                    .expect("dataset should exist")
                     .clone();
 
-                match workbook.kind() {
-                    lib::data::WorkbookKind::Csv => {
+                match dataset {
+                    state::Dataset::Csv(csv) => {
                         let (formulas, errors) = formulas
                             .into_iter()
-                            .map(|formula| {
-                                workbook_csv_formula_to_workspace_update(formula, &workbook)
-                            })
+                            .map(|formula| dataset_csv_formula_to_workspace_update(formula, &csv))
                             .partition::<Vec<_>, _>(|res| res.is_ok());
 
                         if errors.is_empty() {
@@ -262,8 +262,9 @@ mod run {
                                 .collect::<Vec<_>>();
 
                             let path = directory_tree
-                                .get_file_path(workbook.id())
-                                .expect("workbook file path should exist");
+                                .get_file_path(csv.file())
+                                .expect("dataset file path should exist");
+                            let path = root_path.join(path);
 
                             Ok(lib::formula::WorkspaceOrder::Update(lib::formula::Update {
                                 path,
@@ -279,7 +280,7 @@ mod run {
                         }
                     }
 
-                    lib::data::WorkbookKind::Workbook => {
+                    state::Dataset::Workbook(workbook) => {
                         todo!();
                     }
                 }
@@ -303,17 +304,14 @@ mod run {
         }
     }
 
-    fn sort_formulas_by_workbook(
+    fn sort_formulas_by_dataset(
         formulas: Vec<state::Formula>,
     ) -> HashMap<state::ResourceId, Vec<state::Formula>> {
         let mut wb_formulas = HashMap::new();
         for formula in formulas {
             let wb_id = formula.domain.with_untracked(|domain| match domain {
-                state::FormulaDomain::Cell {
-                    workbook,
-                    sheet,
-                    cell,
-                } => workbook.clone(),
+                state::FormulaDomain::CsvCell { dataset, cell } => dataset.clone(),
+                state::FormulaDomain::WorkbookCell { dataset, .. } => dataset.clone(),
             });
 
             let entry = wb_formulas.entry(wb_id).or_insert(vec![]);
@@ -322,18 +320,18 @@ mod run {
         wb_formulas
     }
 
-    fn workbook_csv_formula_to_workspace_update(
+    fn dataset_csv_formula_to_workspace_update(
         formula: state::Formula,
-        workbook: &state::Workbook,
+        csv: &state::Csv,
     ) -> Result<lib::formula::UpdateCsv, error::InvalidCellValue> {
         formula.domain.with_untracked(|domain| match domain {
-            state::FormulaDomain::Cell {
-                workbook: wb_id,
-                sheet,
+            state::FormulaDomain::CsvCell {
+                dataset: ds_id,
                 cell,
             } => {
-                assert_eq!(wb_id, workbook.id());
-                let state::CellValue::Variable(value) = workbook.sheets.read_untracked()[0]
+                assert_eq!(ds_id, csv.id());
+                let state::CellValue::Variable(value) = csv
+                    .sheet()
                     .cells
                     .read_untracked()
                     .get(cell)
@@ -353,6 +351,8 @@ mod run {
                     value,
                 })
             }
+
+            state::FormulaDomain::WorkbookCell { .. } => unreachable!(),
         })
     }
 

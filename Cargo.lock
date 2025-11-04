@@ -852,14 +852,14 @@ dependencies = [
 
 [[package]]
 name = "csv"
-version = "1.3.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acdc4883a9c96732e4733212c01447ebd805833b7275a73ca3ee080fd77afdaf"
+checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
 dependencies = [
  "csv-core",
  "itoa",
  "ryu",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -1911,12 +1911,10 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hermes"
 version = "0.0.1"
 dependencies = [
- "crossbeam",
  "csv",
  "hermes-core",
  "hermes-desktop-lib",
- "notify",
- "notify-debouncer-full",
+ "hermes-fs-daemon",
  "rayon",
  "serde",
  "serde_json",
@@ -1954,7 +1952,20 @@ dependencies = [
  "hermes-core",
  "io_error_serde",
  "serde",
+ "tempfile",
  "thiserror 2.0.17",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hermes-fs-daemon"
+version = "0.0.1"
+dependencies = [
+ "crossbeam",
+ "notify",
+ "notify-debouncer-full",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3068,6 +3079,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
 dependencies = [
  "bitflags 2.9.4",
+ "crossbeam-channel",
  "fsevent-sys",
  "inotify",
  "kqueue",
@@ -3085,6 +3097,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "375bd3a138be7bfeff3480e4a623df4cbfb55b79df617c055cd810ba466fa078"
 dependencies = [
+ "crossbeam-channel",
  "file-id",
  "log",
  "notify",
@@ -5317,7 +5330,7 @@ dependencies = [
 [[package]]
 name = "tauri-sys"
 version = "0.2.3"
-source = "git+https://github.com/JonasKruckenberg/tauri-sys?branch=v2#ac292dbd67a00a57517167b5de54691b57fec34a"
+source = "git+https://github.com/JonasKruckenberg/tauri-sys?branch=v2#f30abe9e18e93d95cd9b6a12ed09cac91976ef05"
 dependencies = [
  "derive_more 2.0.1",
  "futures",

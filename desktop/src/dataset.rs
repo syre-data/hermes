@@ -1,23 +1,23 @@
-use crate::{formula, icon, state, types};
+use crate::{formula, icon, state, state::FileResource, types};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
 use leptos::{
-    either::{Either, EitherOf3},
+    either::{Either, EitherOf3, either},
     ev,
     prelude::*,
 };
 use leptos_icons::Icon;
 use std::{collections::btree_map::Values, path::PathBuf};
 
-#[derive(Clone, derive_more::Deref)]
-struct ActiveWorkbookId(Signal<Option<state::ResourceId>>);
-impl ActiveWorkbookId {
-    pub fn from_active_workbook(base: ReadSignal<state::ActiveWorkbook>) -> Self {
+#[derive(Copy, Clone, derive_more::Deref)]
+struct ActiveDatasetId(Signal<Option<state::ResourceId>>);
+impl ActiveDatasetId {
+    pub fn from_active_dataset(base: ReadSignal<state::ActiveDataset>) -> Self {
         Self(Signal::derive(move || base.read().as_ref().cloned()))
     }
 }
 
-#[derive(Clone, derive_more::Deref)]
+#[derive(Copy, Clone, derive_more::Deref)]
 struct ActiveSpreadsheetId(RwSignal<Option<state::ResourceId>>);
 impl ActiveSpreadsheetId {
     pub fn new() -> Self {
@@ -28,13 +28,13 @@ impl ActiveSpreadsheetId {
 #[component]
 pub fn Workspace() -> impl IntoView {
     let state = expect_context::<state::State>();
-    provide_context(ActiveWorkbookId::from_active_workbook(
-        state.active_workbook.read_only(),
+    provide_context(ActiveDatasetId::from_active_dataset(
+        state.active_dataset.read_only(),
     ));
     provide_context(ActiveSpreadsheetId::new());
 
-    let active = state.active_workbook.read_only();
-    let workbooks = state.workbooks.read_only();
+    let active = state.active_dataset.read_only();
+    let datasets = state.datasets.read_only();
     let mut canvas = state.canvas.clone();
     view! {
         <div class="h-full flex flex-col">
@@ -43,14 +43,20 @@ pub fn Workspace() -> impl IntoView {
             {move || {
                 active
                     .with(|active| {
-                        if let state::ActiveWorkbook::Some { id, .. } = active {
-                            let workbook = workbooks
+                        if let state::ActiveDataset::Some { id, .. } = active {
+                            let dataset = datasets
                                 .read_untracked()
                                 .iter()
-                                .find(|workbook| workbook.file() == id)
+                                .find(|dataset| dataset.file() == id)
                                 .expect("workbook to exist")
                                 .clone();
-                            Some(view! { <Workbook workbook /> })
+                            Some(
+                                either!(
+                                    dataset,
+                                    state::Dataset::Csv(csv) => view! { <Csv csv /> },
+                                    state::Dataset::Workbook(workbook) => view! { <Workbook workbook /> },
+                                ),
+                            )
                         } else {
                             canvas.cells().clear();
                             None
@@ -221,11 +227,12 @@ fn CellValueFormula(
 fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
     let state = expect_context::<state::State>();
     let workspace_owner = expect_context::<state::WorkspaceOwner>();
-    let active_workbook = expect_context::<ActiveWorkbookId>();
+    let active_dataset = expect_context::<ActiveDatasetId>();
     let active_sheet = expect_context::<ActiveSpreadsheetId>();
     let formula_editor_vis = expect_context::<state::FormulaEditorVisibility>();
 
     let create_cell_data = {
+        let datasets = state.datasets;
         let formulas = state.formulas;
         let active_formula = state.active_formula;
         let idx = idx.clone();
@@ -234,14 +241,31 @@ fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
                 return;
             }
 
-            let domain = state::FormulaDomain::Cell {
-                workbook: active_workbook
-                    .get_untracked()
-                    .expect("workbook id to be set"),
-                sheet: active_sheet
-                    .get_untracked()
-                    .expect("spreadsheet id to be set"),
-                cell: idx.clone(),
+            let dataset = active_dataset.with_untracked(|active_dataset| {
+                let active_dataset = active_dataset.as_ref().unwrap();
+                datasets
+                    .read_untracked()
+                    .iter()
+                    .find(|ds| ds.id() == active_dataset)
+                    .expect("dataset to exist")
+                    .clone()
+            });
+            let domain = match dataset {
+                state::Dataset::Csv(csv) => state::FormulaDomain::CsvCell {
+                    dataset: active_dataset
+                        .get_untracked()
+                        .expect("dataset id to be set"),
+                    cell: idx.clone(),
+                },
+                state::Dataset::Workbook(workbook) => state::FormulaDomain::WorkbookCell {
+                    dataset: active_dataset
+                        .get_untracked()
+                        .expect("dataset id to be set"),
+                    sheet: active_sheet
+                        .get_untracked()
+                        .expect("spreadsheet id to be set"),
+                    cell: idx.clone(),
+                },
             };
 
             let formula_id = if let Some(formula) = formulas.get_by_containing_domain(&domain) {
@@ -269,48 +293,40 @@ fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
 }
 
 #[component]
+fn Csv(csv: state::Csv) -> impl IntoView {
+    view! {
+        <Spreadsheet sheet=csv.sheet().clone() />
+        <FormulaEditor />
+    }
+}
+
+#[component]
 fn Workbook(workbook: state::Workbook) -> impl IntoView {
     let active_sheet = expect_context::<ActiveSpreadsheetId>();
     let formula_editor_vis = expect_context::<state::FormulaEditorVisibility>();
 
-    let workbook = workbook.clone();
-    move || match workbook.kind() {
-        lib::data::WorkbookKind::Csv => {
-            let sheet = workbook.sheets.read().get(0).expect("sheet exists").clone();
-            active_sheet.update(|id| {
-                let _ = id.insert(sheet.id().clone());
-            });
-            Either::Left(view! {
-                <Spreadsheet sheet />
-                <FormulaEditor />
-            })
-        }
-        lib::data::WorkbookKind::Workbook => {
-            let sheet_names = workbook
-                .sheets
-                .read()
-                .iter()
-                .map(|sheet| sheet.name.get())
-                .collect::<Vec<_>>();
+    let sheet_names = workbook
+        .sheets
+        .read()
+        .iter()
+        .map(|sheet| sheet.name.get())
+        .collect::<Vec<_>>();
 
-            let active_sheet = workbook.active_sheet.read_only();
-            let workbook = workbook.clone();
-            Either::Right(view! {
-                {move || {
-                    let sheet = workbook
-                        .sheets
-                        .read()
-                        .get(active_sheet.get())
-                        .expect("sheet exists")
-                        .clone();
-                    view! { <Spreadsheet sheet /> }
-                }}
-                <div>
-                    <SheetList sheets=sheet_names />
-                </div>
-                <FormulaEditor />
-            })
-        }
+    let active_sheet = workbook.active_sheet.read_only();
+    let workbook = workbook.clone();
+    let sheet = workbook
+        .sheets
+        .read()
+        .get(active_sheet.get())
+        .expect("sheet exists")
+        .clone();
+
+    view! {
+        <Spreadsheet sheet />
+        <div>
+            <SheetList sheets=sheet_names />
+        </div>
+        <FormulaEditor />
     }
 }
 
@@ -416,19 +432,3 @@ fn expr_error_to_string(error: &core::expr::Error) -> String {
         core::expr::Error::InvalidCellRef(cell_ref) => "#CellRef".to_string(),
     }
 }
-
-// fn calamine_data_to_string(data: &lib::data::Data) -> String {
-//     use lib::data::Data;
-
-//     match data {
-//         Data::String(val) => val.clone(),
-//         Data::Float(val) => val.to_string(),
-//         Data::Int(val) => val.to_string(),
-//         Data::Bool(val) => val.to_string(),
-//         Data::Empty => "".to_string(),
-//         Data::DateTime(val) => val.to_string(),
-//         Data::DateTimeIso(val) => val.clone(),
-//         Data::DurationIso(val) => val.clone(),
-//         Data::Error(val) => val.to_string(),
-//     }
-// }

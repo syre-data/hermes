@@ -1,10 +1,10 @@
 mod app;
 mod component;
+mod dataset;
 mod explorer;
 mod formula;
 mod message;
 mod state;
-mod workbook;
 
 pub use app::App;
 

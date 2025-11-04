@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 hermes-core = { workspace = true, features = ["serde"] }
 
-csv.workspace = true
+csv = { workspace = true, optional = true }
 calamine = { workspace = true, features = ["serde"] }
 derive_more = { workspace = true, features = ["from"] }
 serde = { workspace = true, features = ["derive"] }
@@ -14,7 +14,8 @@ io_error_serde = { git = "https://github.com/syre-data/io_error_serde.git" }
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["time"] }
+tempfile = { version = "3.23", optional = true }
 
 [features]
-fs = []
+fs = ["dep:csv", "dep:tempfile"]
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
