@@ -1981,6 +1981,7 @@ version = "0.0.1"
 dependencies = [
  "console_error_panic_hook",
  "derive_more 2.0.1",
+ "futures",
  "hermes-core",
  "hermes-desktop-lib",
  "icondata",
@@ -2609,7 +2610,7 @@ dependencies = [
 [[package]]
 name = "leptos-use"
 version = "0.16.3"
-source = "git+https://github.com/Synphonyte/leptos-use.git?branch=main#fe3c6a72efff90981f4137bbe6c1195dc5556cbb"
+source = "git+https://github.com/Synphonyte/leptos-use.git?branch=main#95efee495326209760f0bed7cef1a82913eea59b"
 dependencies = [
  "cfg-if",
  "default-struct-builder",
@@ -5312,7 +5313,7 @@ dependencies = [
 [[package]]
 name = "tauri-sys"
 version = "0.2.3"
-source = "git+https://github.com/JonasKruckenberg/tauri-sys?branch=v2#8f10b2009c4dc36a8a21bd830361d275d0dfbc3a"
+source = "git+https://github.com/JonasKruckenberg/tauri-sys?branch=v2#1f765b051631aef1c380b58bf2a62ae2856ff863"
 dependencies = [
  "derive_more 2.0.1",
  "futures",

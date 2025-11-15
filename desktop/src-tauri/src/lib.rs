@@ -1,6 +1,7 @@
 use hermes_fs_daemon as fs_daemon;
-use std::sync::Arc;
 use tauri::Manager;
+
+mod fs_event;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,22 +19,6 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[derive(derive_more::Deref, Clone)]
-struct FsDaemonEventReceiver(Arc<tokio::sync::Mutex<fs_daemon::server::EventReceiver>>);
-impl FsDaemonEventReceiver {
-    pub fn new(event_rx: fs_daemon::server::EventReceiver) -> Self {
-        Self(Arc::new(tokio::sync::Mutex::new(event_rx)))
-    }
-}
-
-#[derive(derive_more::Deref, Clone)]
-struct FsDaemonCommandSender(Arc<tokio::sync::Mutex<fs_daemon::server::CommandSender>>);
-impl FsDaemonCommandSender {
-    pub fn new(command_tx: fs_daemon::server::CommandSender) -> Self {
-        Self(Arc::new(tokio::sync::Mutex::new(command_tx)))
-    }
-}
-
 /// Runs setup tasks:
 /// 1. Launches `fs_daemon`.
 /// 2. Registers event listeners.
@@ -48,22 +33,87 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .spawn(move || daemon.run())
         .expect("could not launch fs daemon");
 
-    let event_rx = FsDaemonEventReceiver::new(event_rx);
+    let event_rx = fs_event::FsDaemonEventReceiver::new(event_rx);
     app.manage(event_rx.clone());
-    app.manage(FsDaemonCommandSender::new(command_tx));
-    tauri::async_runtime::spawn(handle_fs_events(app.handle().clone()));
+    app.manage(fs_event::FsDaemonCommandSender::new(command_tx));
+    tauri::async_runtime::spawn(fs_event::handle_events(app.handle().clone()));
     Ok(())
 }
 
-#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-async fn handle_fs_events(app: tauri::AppHandle) {
-    let event_rx = app.state::<FsDaemonEventReceiver>();
-    while let Some(events) = event_rx.lock().await.recv().await {
-        tracing::trace!(?events);
+mod utils {
+    use hermes_desktop_lib as lib;
+    use std::path::PathBuf;
+
+    pub async fn load_dataset(
+        path: impl Into<PathBuf>,
+    ) -> Result<lib::data::Dataset, lib::data::error::Load> {
+        use lib::data::Dataset;
+
+        let path = path.into();
+        let file_kind = if let Some(ext) = path.extension().map(|ext| ext.to_str()).flatten() {
+            match ext {
+                "csv" | "tsv" => FileKind::Csv,
+                "xlsx" | "xls" => FileKind::Excel,
+                _ => FileKind::Unknown,
+            }
+        } else {
+            FileKind::Unknown
+        };
+
+        match file_kind {
+            FileKind::Csv => tauri::async_runtime::spawn_blocking({
+                move || lib::data::Csv::load_from_path(&path)
+            })
+            .await
+            .expect("tauri async runtime failed")
+            .map(|csv| csv.into())
+            .map_err(|err| err.into()),
+
+            FileKind::Excel => tauri::async_runtime::spawn_blocking({
+                move || lib::data::Workbook::load_from_path(&path)
+            })
+            .await
+            .expect("tauri async runtime failed")
+            .map(|workbook| workbook.into())
+            .map_err(|err| err.into()),
+
+            FileKind::Unknown => {
+                match tauri::async_runtime::spawn_blocking({
+                    let path = path.clone();
+                    move || lib::data::Csv::load_from_path(&path)
+                })
+                .await
+                .expect("tauri async runtime failed")
+                {
+                    Ok(csv) => Ok(csv.into()),
+                    Err(csv_err) => match csv_err {
+                        lib::data::error::LoadCsv::Io(_) => Err(csv_err.into()),
+                        _ => match tauri::async_runtime::spawn_blocking({
+                            let path = path.clone();
+                            move || lib::data::Workbook::load_from_path(&path)
+                        })
+                        .await
+                        .expect("tauri async runtime failed")
+                        {
+                            Ok(workbook) => Ok(workbook.into()),
+                            Err(_) => Err(lib::data::error::Load::InvalidFileType),
+                        },
+                    },
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    enum FileKind {
+        Csv,
+        Excel,
+        Unknown,
     }
 }
 
 mod commands {
+    use crate::{fs_event, utils};
     use hermes_core as core;
     use hermes_desktop_lib as lib;
     use hermes_fs_daemon as fs_daemon;
@@ -86,7 +136,7 @@ mod commands {
 
     #[tauri::command]
     pub async fn load_directory(
-        fs_command_tx: tauri::State<'_, crate::FsDaemonCommandSender>,
+        fs_command_tx: tauri::State<'_, fs_event::FsDaemonCommandSender>,
         root: PathBuf,
     ) -> Result<lib::fs::DirectoryTree, lib::fs::error::FromFileSystem> {
         let res = lib::fs::DirectoryTree::from_file_system(&root);
@@ -101,44 +151,8 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn load_dataset(path: PathBuf) -> Result<lib::data::Dataset, lib::data::error::Load> {
-        use lib::data::Dataset;
-
-        let file_kind = if let Some(ext) = path.extension().map(|ext| ext.to_str()).flatten() {
-            match ext {
-                "csv" | "tsv" => FileKind::Csv,
-                "xlsx" | "xls" => FileKind::Excel,
-                _ => FileKind::Unknown,
-            }
-        } else {
-            FileKind::Unknown
-        };
-
-        match file_kind {
-            FileKind::Csv => lib::data::Csv::load_from_path(&path)
-                .map(|csv| csv.into())
-                .map_err(|err| err.into()),
-            FileKind::Excel => lib::data::Workbook::load_from_path(&path)
-                .map(|workbook| workbook.into())
-                .map_err(|err| err.into()),
-            FileKind::Unknown => match lib::data::Csv::load_from_path(&path) {
-                Ok(csv) => Ok(csv.into()),
-                Err(csv_err) => match csv_err {
-                    lib::data::error::LoadCsv::Io(_) => Err(csv_err.into()),
-                    _ => match lib::data::Workbook::load_from_path(&path) {
-                        Ok(workbook) => Ok(workbook.into()),
-                        Err(_) => Err(lib::data::error::Load::InvalidFileType),
-                    },
-                },
-            },
-        }
-    }
-
-    #[derive(Debug)]
-    enum FileKind {
-        Csv,
-        Excel,
-        Unknown,
+    pub async fn load_dataset(path: PathBuf) -> Result<lib::data::Dataset, lib::data::error::Load> {
+        utils::load_dataset(&path).await
     }
 
     /// Run workspace orders.

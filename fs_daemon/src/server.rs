@@ -126,6 +126,7 @@ impl Daemon {
             EventKind,
             event::{ModifyKind, RenameMode},
         };
+        use std::collections::HashMap;
 
         let relevant_events = events.iter().filter(|event| {
             matches!(
@@ -141,7 +142,7 @@ impl Daemon {
             )
         });
 
-        let mut path_events = std::collections::HashMap::new();
+        let mut path_events = HashMap::new();
         for event in relevant_events {
             match event.kind {
                 EventKind::Create(_)
@@ -191,13 +192,58 @@ impl Daemon {
         #[cfg(feature = "tracing")]
         tracing::trace!("path grouped events\n{path_events:?}");
 
+        let mut ancestor_paths = HashMap::new();
+        for path in path_events.keys() {
+            let mut highest_ancestor = path;
+            for other in path_events.keys() {
+                if highest_ancestor.starts_with(other) {
+                    highest_ancestor = other;
+                }
+            }
+            if highest_ancestor != path {
+                let entry = ancestor_paths.entry(highest_ancestor).or_insert(vec![]);
+                entry.push(path);
+            }
+        }
+
+        let ancestor_paths = ancestor_paths
+            .into_iter()
+            .filter(|(ancestor, children)| {
+                let ancestor_events = path_events.get(*ancestor).expect("path events to exisst");
+                let last_event = ancestor_events
+                    .last()
+                    .expect("path should have at least one event");
+
+                matches!(last_event.kind, EventKind::Create(_) | EventKind::Remove(_))
+            })
+            .map(|(ancestor, children)| {
+                (
+                    ancestor.clone(),
+                    children.into_iter().cloned().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (ancestor, children) in ancestor_paths {
+            let ancestor_events = path_events
+                .get_mut(&ancestor)
+                .expect("path events to exist");
+            let last_event = ancestor_events
+                .last()
+                .expect("path should have at least one event");
+            *ancestor_events = vec![last_event];
+
+            for child in children {
+                path_events.remove(&child);
+            }
+        }
+
         for (_, path_events) in path_events.iter_mut() {
-            let last = path_events
+            let last_event = path_events
                 .last()
                 .expect("path should have at least one event");
 
-            if matches!(last.kind, EventKind::Create(_) | EventKind::Remove(_)) {
-                *path_events = vec![last];
+            if matches!(last_event.kind, EventKind::Create(_) | EventKind::Remove(_)) {
+                *path_events = vec![last_event];
                 continue;
             }
 
@@ -325,12 +371,13 @@ impl Daemon {
                 let [from, to] = &event.paths[..] else {
                     panic!("invalid paths");
                 };
+                let name = to.file_name().expect("file name exists").to_os_string();
 
                 if to.is_file() {
                     vec![
                         event::File::Renamed {
                             from: from.clone(),
-                            to: to.clone(),
+                            to: name,
                         }
                         .into(),
                     ]
@@ -338,7 +385,7 @@ impl Daemon {
                     vec![
                         event::Folder::Renamed {
                             from: from.clone(),
-                            to: to.clone(),
+                            to: name,
                         }
                         .into(),
                     ]

@@ -2,7 +2,12 @@ use crate::{formula, message};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
 use leptos::prelude::*;
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 const CANVAS_ROWS_DEFAULT: core::data::IndexType = 100;
 const CANVAS_COLS_DEFAULT: core::data::IndexType = 26;
@@ -342,6 +347,17 @@ impl Csv {
 
     pub fn sheet(&self) -> &Spreadsheet {
         &self.sheet
+    }
+
+    pub fn set_data(&mut self, data: lib::data::Csv) {
+        self.sheet.cells.update(|cells| {
+            cells.clear();
+            for (idx, value) in data.sheet.iter() {
+                cells.insert(idx.clone(), CellValue::Fixed(value.clone()));
+            }
+        });
+
+        self.inner = data;
     }
 }
 
@@ -858,6 +874,37 @@ impl DirectoryTree {
         });
 
         Some(path.join(filename))
+    }
+
+    pub fn get_file_by_path(&self, path: impl AsRef<Path>) -> Option<File> {
+        use std::path::Component;
+        let dir_path = path.as_ref().parent()?;
+        let mut cur_dir = Self::ROOT;
+        for component in dir_path.components() {
+            let Component::Normal(dir_name) = component else {
+                panic!("invalid path");
+            };
+            let Some(next) = self
+                .children_idx(cur_dir)
+                .unwrap()
+                .into_iter()
+                .find(|&idx| {
+                    let dir = &self.directories.read_untracked()[idx];
+                    dir.name.with_untracked(|name| name == dir_name)
+                })
+            else {
+                return None;
+            };
+            cur_dir = next;
+        }
+
+        let filename = path.as_ref().file_name().expect("path to have a file name");
+        let dir = &self.directories.read_untracked()[cur_dir];
+        dir.files
+            .read_untracked()
+            .iter()
+            .find(|file| file.name.with_untracked(|name| name == filename))
+            .cloned()
     }
 
     /// # Returns

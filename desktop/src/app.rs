@@ -1,7 +1,7 @@
 use crate::{component, dataset, explorer, formula, icon, message, state, types};
 use hermes_core as core;
 use hermes_desktop_lib as lib;
-use leptos::{either::Either, ev, prelude::*};
+use leptos::{either::Either, ev, prelude::*, task};
 use leptos_icons::Icon;
 use leptos_meta::*;
 use leptos_use::use_preferred_dark;
@@ -15,7 +15,6 @@ pub fn App() -> impl IntoView {
     let (root_path, set_root_path) = signal(None);
 
     let html_class = move || if prefers_dark_mode() { "dark" } else { "" };
-
     view! {
         <Title formatter=|text| text text="Hermes" />
         <Html attr:class=html_class />
@@ -106,11 +105,29 @@ fn LoadError(errors: ArcRwSignal<Errors>) -> impl IntoView {
 
 #[component]
 fn WorkspaceView(root: PathBuf, graph: lib::fs::DirectoryTree) -> impl IntoView {
+    use futures::StreamExt;
+
     let state = state::State::new(root, graph);
     provide_context(state.clone());
     provide_context(state::LoadWorkbookActionAbortHandle::new());
     provide_context(state::WorkspaceOwner::with_current());
     provide_context(state::FormulaEditorVisibility::new());
+
+    task::spawn_local_scoped_with_cancellation({
+        let state = state.clone();
+        async move {
+            let mut app_events = tauri_sys::event::listen::<
+                Vec<Result<lib::event::Event, lib::event::Error>>,
+            >(lib::event::EVENT_TOPIC)
+            .await
+            .expect("could not create file system event listener");
+
+            while let Some(event) = app_events.next().await {
+                let events = event.payload;
+                event::handle_events(events, &state);
+            }
+        }
+    });
 
     view! {
         <div class="flex flex-col h-full">
@@ -361,5 +378,85 @@ mod run {
 
         #[derive(Debug)]
         pub struct InvalidCellValue(pub core::data::CellIndex);
+    }
+}
+
+mod event {
+    use crate::state;
+    use hermes_desktop_lib as lib;
+    use leptos::prelude::{ReadUntracked, Update, WithUntracked};
+
+    #[cfg_attr(feature = "tracing", tracing::instrument(level = "debug", skip(state)))]
+    pub fn handle_events(
+        events: Vec<Result<lib::event::Event, lib::event::Error>>,
+        state: &state::State,
+    ) {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(?events);
+
+        for event in events {
+            match event {
+                Ok(event) => process_event(event, &state),
+                Err(err) => process_error(err, &state),
+            }
+        }
+    }
+
+    fn process_error(err: lib::event::Error, state: &state::State) {
+        match err {
+            hermes_desktop_lib::event::Error::LoadDataset { path, error } => todo!(),
+        }
+    }
+
+    fn process_event(event: lib::event::Event, state: &state::State) {
+        match event {
+            lib::event::Event::File(_) => process_event_file(event, state),
+            lib::event::Event::Folder(_) => todo!(),
+            lib::event::Event::Any(_) => todo!(),
+        }
+    }
+
+    fn process_event_file(event: lib::event::Event, state: &state::State) {
+        let lib::event::Event::File(kind) = &event else {
+            panic!("invalid event kind");
+        };
+
+        match kind {
+            lib::event::File::Created(_) => todo!(),
+            lib::event::File::Removed(_) => todo!(),
+            lib::event::File::Renamed { .. } => todo!(),
+            lib::event::File::Moved { .. } => todo!(),
+            lib::event::File::Modified { .. } => process_event_file_modified(event, state),
+        }
+    }
+
+    fn process_event_file_modified(event: lib::event::Event, state: &state::State) {
+        let lib::event::Event::File(lib::event::File::Modified { path, data }) = event else {
+            panic!("invalid event kind");
+        };
+
+        let Ok(rel_path) = path.strip_prefix(state.root_path()) else {
+            return;
+        };
+        let Some(file) = state.directory_tree.get_file_by_path(rel_path) else {
+            return;
+        };
+
+        state.datasets.update(|datasets| {
+            let Some(dataset) = datasets
+                .iter_mut()
+                .find(|dataset| dataset.id() == file.id())
+            else {
+                return;
+            };
+
+            match (data, dataset) {
+                (lib::data::Dataset::Csv(update), state::Dataset::Csv(dataset)) => {
+                    dataset.set_data(update.clone());
+                }
+                (lib::data::Dataset::Workbook(new), state::Dataset::Workbook(old)) => todo!(),
+                _ => todo!("dataset kind changed"),
+            }
+        });
     }
 }

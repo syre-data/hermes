@@ -27,7 +27,7 @@ hermes-desktop-lib = { workspace = true, features = ["fs"] }
 hermes-fs-daemon = { workspace = true, features = ["server", "serde"] }
 
 csv.workspace = true
-derive_more = { workspace = true, features = ["deref"] }
+derive_more = { workspace = true, features = ["deref", "from"] }
 rayon = "1.8"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -10,6 +10,7 @@ hermes-desktop-lib.workspace = true
 
 console_error_panic_hook = "0.1.7"
 derive_more = { workspace = true, features = ["deref", "from"] }
+futures = "0.3"
 js-sys = "0.3"
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6"
@@ -34,15 +35,13 @@ features = ["ant-design-icons", "font-awesome", "material-design-icons"]
 [dependencies.tauri-sys]
 git = "https://github.com/JonasKruckenberg/tauri-sys"
 branch = "v2"
-features = ["core"]
+features = ["core", "event"]
 
 [dependencies.leptos-use]
 git = "https://github.com/Synphonyte/leptos-use.git"
 branch = "main"
 default-features = false
-features = ["use_preferred_dark", "use_mutation_observer"]
-# TODO: `use_mutation_observer` only activate to compensate for error.
-# See https://github.com/Synphonyte/leptos-use/issues/279.
+features = ["use_preferred_dark"]
 
 [dependencies.web-sys]
 version = "0.3"
