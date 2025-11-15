@@ -8,8 +8,8 @@ hermes-core = { path = "core" }
 hermes-desktop-lib = { path = "desktop/src-lib" }
 hermes-fs-daemon = { path = "fs_daemon" }
 
-# calamine = "0.30"
-calamine = { path = "C:\\Users\\carls\\Downloads\\calamine" }
+calamine = "0.31"
+# calamine = { path = "C:\\Users\\carls\\Downloads\\calamine" }
 csv = "1.4"
 derive_more = "2.0"
 serde = "1.0"

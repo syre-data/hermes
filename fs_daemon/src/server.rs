@@ -107,11 +107,143 @@ impl Daemon {
         tracing::trace!(?events);
 
         match events {
-            Ok(events) => self.process_events(events),
+            Ok(events) => {
+                let events = Self::filter_fs_events(events);
+                #[cfg(feature = "tracing")]
+                tracing::trace!("filtered events\n{events:?}");
+
+                self.process_events(events)
+            }
             Err(err) => {
                 todo!("{err:?}")
             }
         }
+    }
+
+    #[cfg_attr(feature = "tracing", tracing::instrument(level = "trace"))]
+    fn filter_fs_events(mut events: Vec<DebouncedEvent>) -> Vec<DebouncedEvent> {
+        use notify::{
+            EventKind,
+            event::{ModifyKind, RenameMode},
+        };
+
+        let relevant_events = events.iter().filter(|event| {
+            matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(
+                        ModifyKind::Any
+                            | ModifyKind::Data(_)
+                            | ModifyKind::Name(_)
+                            | ModifyKind::Other
+                    )
+            )
+        });
+
+        let mut path_events = std::collections::HashMap::new();
+        for event in relevant_events {
+            match event.kind {
+                EventKind::Create(_)
+                | EventKind::Remove(_)
+                | EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Other) => {
+                    let [path] = &event.paths[..] else {
+                        panic!("invalid paths");
+                    };
+
+                    let entry = path_events.entry(path.clone()).or_insert(vec![]);
+                    entry.push(event);
+                }
+
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                    let [from, to] = &event.paths[..] else {
+                        panic!("invalid paths");
+                    };
+
+                    let entry_from = path_events.entry(from.clone()).or_insert(vec![]);
+                    entry_from.push(event);
+
+                    let entry_to = path_events.entry(to.clone()).or_insert(vec![]);
+                    entry_to.push(event);
+                }
+
+                EventKind::Modify(ModifyKind::Name(RenameMode::From))
+                | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                    let [path] = &event.paths[..] else {
+                        panic!("invalid paths");
+                    };
+
+                    let entry = path_events.entry(path.clone()).or_insert(vec![]);
+                    entry.push(event);
+                }
+
+                EventKind::Modify(ModifyKind::Name(RenameMode::Any))
+                | EventKind::Modify(ModifyKind::Name(RenameMode::Other)) => todo!(),
+
+                EventKind::Access(_)
+                | EventKind::Any
+                | EventKind::Other
+                | EventKind::Modify(ModifyKind::Metadata(_)) => {
+                    unreachable!("filtered out beforehand")
+                }
+            }
+        }
+        #[cfg(feature = "tracing")]
+        tracing::trace!("path grouped events\n{path_events:?}");
+
+        for (_, path_events) in path_events.iter_mut() {
+            let last = path_events
+                .last()
+                .expect("path should have at least one event");
+
+            if matches!(last.kind, EventKind::Create(_) | EventKind::Remove(_)) {
+                *path_events = vec![last];
+                continue;
+            }
+
+            if path_events.len() == 3 {
+                if matches!(
+                    path_events[0].kind,
+                    EventKind::Remove(
+                        notify::event::RemoveKind::Any | notify::event::RemoveKind::File
+                    )
+                ) && matches!(
+                    path_events[1].kind,
+                    EventKind::Create(
+                        notify::event::CreateKind::Any | notify::event::CreateKind::File
+                    )
+                ) && matches!(
+                    path_events[2].kind,
+                    EventKind::Modify(notify::event::ModifyKind::Any)
+                ) {
+                    // typically caused from app replacing file due to modifications.
+                    *path_events = vec![path_events[2]];
+                    continue;
+                }
+            }
+        }
+        #[cfg(feature = "tracing")]
+        tracing::trace!("filtered path grouped events\n{path_events:?}");
+
+        let relevant_events = path_events
+            .into_iter()
+            .flat_map(|(_, events)| events)
+            .map(|relevant| {
+                events
+                    .iter()
+                    .position(|event| relevant == event)
+                    .expect("event to exist")
+            })
+            .collect::<Vec<_>>();
+
+        let mut remove_idx = (0..events.len())
+            .filter(|idx| !relevant_events.contains(idx))
+            .collect::<Vec<_>>();
+        remove_idx.sort();
+        for idx in remove_idx.into_iter().rev() {
+            events.remove(idx);
+        }
+        events
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(level = "trace", skip(self)))]
@@ -132,8 +264,8 @@ impl Daemon {
             notify::EventKind::Create(_) => Self::process_event_create(event),
             notify::EventKind::Modify(_) => Self::process_event_modify(event),
             notify::EventKind::Remove(_) => Self::process_event_remove(event),
-            notify::EventKind::Any | notify::EventKind::Access(_) | notify::EventKind::Other => {
-                vec![]
+            notify::EventKind::Access(_) | notify::EventKind::Any | notify::EventKind::Other => {
+                unreachable!("filtered out before hand")
             }
         }
     }

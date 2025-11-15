@@ -40,7 +40,9 @@ features = ["core"]
 git = "https://github.com/Synphonyte/leptos-use.git"
 branch = "main"
 default-features = false
-features = ["use_preferred_dark"]
+features = ["use_preferred_dark", "use_mutation_observer"]
+# TODO: `use_mutation_observer` only activate to compensate for error.
+# See https://github.com/Synphonyte/leptos-use/issues/279.
 
 [dependencies.web-sys]
 version = "0.3"

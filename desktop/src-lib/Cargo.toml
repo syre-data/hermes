@@ -7,7 +7,7 @@ edition = "2024"
 hermes-core = { workspace = true, features = ["serde"] }
 
 csv = { workspace = true, optional = true }
-calamine = { workspace = true, features = ["serde"] }
+calamine = { workspace = true }
 derive_more = { workspace = true, features = ["from"] }
 serde = { workspace = true, features = ["derive"] }
 io_error_serde = { git = "https://github.com/syre-data/io_error_serde.git" }
