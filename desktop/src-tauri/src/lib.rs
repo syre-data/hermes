@@ -162,7 +162,14 @@ mod commands {
     #[tauri::command]
     pub async fn run_workspace(
         orders: Vec<lib::formula::WorkspaceOrder>,
-    ) -> Result<(), Vec<(usize, lib::formula::error::WorkspaceOrder)>> {
+    ) -> Result<(), Vec<lib::formula::error::WorkspaceOrder>> {
+        let formulas = orders
+            .iter()
+            .flat_map(|order| match order {
+                lib::formula::WorkspaceOrder::Create => todo!(),
+                lib::formula::WorkspaceOrder::Update(update) => update.formulas(),
+            })
+            .collect::<Vec<_>>();
         let mut tasks = tokio::task::JoinSet::new();
         let mut task_handles = Vec::with_capacity(orders.len());
         for order in orders {
@@ -171,26 +178,20 @@ mod commands {
         }
 
         let mut errors = Vec::new();
-        while let Some(result) = tasks.join_next_with_id().await {
+        while let Some(result) = tasks.join_next().await {
             match result {
-                Ok((id, result)) => {
+                Ok(result) => {
                     if let Err(err) = result {
-                        let idx = task_handles
-                            .iter()
-                            .position(|handle| handle.id() == id)
-                            .expect("task handle should exist");
-
-                        errors.push((idx, err))
+                        errors.push(err)
                     }
                 }
 
                 Err(err) => {
-                    let idx = task_handles
-                        .iter()
-                        .position(|handle| handle.id() == err.id())
-                        .expect("task handle should exist");
-
-                    errors.push((idx, lib::formula::error::WorkspaceOrder::TaskNotCompleted));
+                    let err = lib::formula::error::WorkspaceOrder::new(
+                        formulas.clone(),
+                        lib::formula::error::WorkspaceOrderKind::TaskNotCompleted,
+                    );
+                    errors.push(err);
                 }
             }
         }
@@ -232,24 +233,74 @@ mod commands {
         path: PathBuf,
         updates: Vec<lib::formula::UpdateCsv>,
     ) -> Result<(), lib::formula::error::WorkspaceOrder> {
+        use core::expr::Value;
+
         #[cfg(feature = "tracing")]
         tracing::trace!("processing orders");
 
+        let formulas = updates
+            .iter()
+            .map(|update| update.formula().clone())
+            .collect::<Vec<_>>();
+
         let file = tokio::fs::File::open(&path)
             .await
-            .map_err(|err| lib::formula::error::WorkspaceOrder::OpenFile(err.kind()))?
+            .map_err(|err| {
+                let err = lib::formula::error::WorkspaceOrderKind::OpenFile {
+                    path: path.clone(),
+                    error: err.kind(),
+                };
+
+                lib::formula::error::WorkspaceOrder::new(formulas.clone(), err)
+            })?
             .into_std()
             .await;
-        let rdr = csv::Reader::from_reader(file);
-        let mut csv = lib::data::Csv::from_csv_reader(rdr)?;
+
+        let mut csv = lib::data::Csv::from_reader(file).map_err(|err| {
+            let err = match err {
+                lib::data::error::LoadCsv::Io(err) => err,
+                lib::data::error::LoadCsv::DataTooLarge => todo!(),
+            };
+            let err = lib::formula::error::WorkspaceOrderKind::OpenFile {
+                path: path.clone(),
+                error: err,
+            };
+            lib::formula::error::WorkspaceOrder::new(formulas.clone(), err)
+        })?;
+
         for update in updates {
-            let idx = core::data::CellIndex::new(update.row, update.col);
-            csv.sheet
-                .insert(idx, update.value)
-                .expect("cell should be empty");
+            let (formula, row, col, value) = update.into_parts();
+            let idx = core::data::CellIndex::new(row, col);
+            if let Some(sheet_value) = csv.sheet.get(&idx) {
+                let empty_value = match sheet_value {
+                    Value::Empty => true,
+                    Value::String(value) => value.is_empty(),
+                    Value::Int(_) => false,
+                    Value::Float(_) => false,
+                    Value::Bool(_) => false,
+                    Value::DateTime(date_time) => false,
+                    Value::Duration(duration) => false,
+                };
+
+                if empty_value {
+                    csv.sheet.set(idx.clone(), value.clone());
+                } else {
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(?idx, ?value);
+                    todo!();
+                }
+            } else {
+                csv.sheet.insert(idx, value).expect("cell should be empty");
+            }
         }
 
-        csv.save(&path)?;
+        csv.save(&path).map_err(|err| {
+            let err = match err {
+                lib::data::error::SaveCsv::Io(err) => err,
+            };
+            let err = lib::formula::error::WorkspaceOrderKind::Save { path, error: err };
+            lib::formula::error::WorkspaceOrder::new(formulas.clone(), err)
+        })?;
         Ok(())
     }
 

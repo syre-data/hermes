@@ -10,7 +10,7 @@ use leptos_icons::Icon;
 use std::{collections::btree_map::Values, path::PathBuf};
 
 #[derive(Copy, Clone, derive_more::Deref)]
-struct ActiveDatasetId(Signal<Option<state::ResourceId>>);
+struct ActiveDatasetId(Signal<Option<lib::ResourceId>>);
 impl ActiveDatasetId {
     pub fn from_active_dataset(base: ReadSignal<state::ActiveDataset>) -> Self {
         Self(Signal::derive(move || base.read().as_ref().cloned()))
@@ -18,7 +18,7 @@ impl ActiveDatasetId {
 }
 
 #[derive(Copy, Clone, derive_more::Deref)]
-struct ActiveSpreadsheetId(RwSignal<Option<state::ResourceId>>);
+struct ActiveSpreadsheetId(RwSignal<Option<lib::ResourceId>>);
 impl ActiveSpreadsheetId {
     pub fn new() -> Self {
         Self(RwSignal::new(None))
@@ -164,15 +164,12 @@ fn CellValueUnset() -> impl IntoView {
     view! { <td class="cursor-not-allowed"></td> }
 }
 
-const STATIC_CELL_DATA_CLASS: &'static str =
-    "cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700";
-
 /// Cell data for static data.
 #[component]
 fn CellValueFixed(data: lib::data::Data, idx: core::data::CellIndex) -> impl IntoView {
+    const CLASS: &str = "text-secondary-800 hover:bg-secondary-50 dark:text-secondary-100 dark:hover:bg-secondary-700";
     view! {
-        <td class=STATIC_CELL_DATA_CLASS data-row=idx.row() data-col=idx.col()>
-            // {calamine_data_to_string(&data)}
+        <td class=CLASS data-row=idx.row() data-col=idx.col()>
             {data.to_string()}
         </td>
     }
@@ -225,6 +222,7 @@ fn CellValueFormula(
 /// Cell data for an empty cell.
 #[component]
 fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
+    const CLASS: &str = "cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700";
     let state = expect_context::<state::State>();
     let workspace_owner = expect_context::<state::WorkspaceOwner>();
     let active_dataset = expect_context::<ActiveDatasetId>();
@@ -282,14 +280,7 @@ fn CellEmpty(idx: core::data::CellIndex) -> impl IntoView {
         }
     };
 
-    view! {
-        <td
-            class=STATIC_CELL_DATA_CLASS
-            on:click=create_cell_data
-            data-row=idx.row()
-            data-col=idx.col()
-        ></td>
-    }
+    view! { <td class=CLASS on:click=create_cell_data data-row=idx.row() data-col=idx.col()></td> }
 }
 
 #[component]

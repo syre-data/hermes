@@ -190,13 +190,27 @@ mod run {
         };
 
         let run_workspace = Action::new_local({
+            let state = state.clone();
             move |orders: &Vec<lib::formula::WorkspaceOrder>| {
                 let orders = orders.clone();
+                let state = state.clone();
                 async move {
-                    if let Err(err) = run_workspace(&orders).await {
-                        tracing::warn!(?err);
+                    if let Err(errors) = run_workspace(&orders).await {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(?errors);
+
+                        let mut err_formulas = errors
+                            .iter()
+                            .flat_map(|err| err.formulas())
+                            .collect::<Vec<_>>();
+                        err_formulas.sort();
+                        err_formulas.dedup();
+                        state
+                            .formulas
+                            .write()
+                            .retain(|formula| err_formulas.contains(&formula.id()));
                     } else {
-                        tracing::info!("workspace run complete");
+                        state.formulas.write().clear();
                     };
                 }
             }
@@ -236,11 +250,9 @@ mod run {
         }
     }
 
-    /// # Returns
-    /// If an error occurs, returns a `Vec<(<order index>, <error>)>`.
     async fn run_workspace<'a>(
         orders: &'a Vec<lib::formula::WorkspaceOrder>,
-    ) -> Result<(), Vec<(usize, lib::formula::error::WorkspaceOrder)>> {
+    ) -> Result<(), Vec<lib::formula::error::WorkspaceOrder>> {
         #[derive(serde::Serialize)]
         struct Args<'a> {
             orders: &'a Vec<lib::formula::WorkspaceOrder>,
@@ -323,7 +335,7 @@ mod run {
 
     fn sort_formulas_by_dataset(
         formulas: Vec<state::Formula>,
-    ) -> HashMap<state::ResourceId, Vec<state::Formula>> {
+    ) -> HashMap<lib::ResourceId, Vec<state::Formula>> {
         let mut wb_formulas = HashMap::new();
         for formula in formulas {
             let wb_id = formula.domain.with_untracked(|domain| match domain {
@@ -355,6 +367,8 @@ mod run {
                     .expect("cell should exist")
                     .clone()
                 else {
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(?cell);
                     panic!("invalid cell value type");
                 };
 
@@ -362,11 +376,12 @@ mod run {
                     return Err(error::InvalidCellValue(cell.clone()));
                 };
 
-                Ok(lib::formula::UpdateCsv {
-                    row: cell.row(),
-                    col: cell.col(),
+                Ok(lib::formula::UpdateCsv::new(
+                    formula.id().clone(),
+                    cell.row(),
+                    cell.col(),
                     value,
-                })
+                ))
             }
 
             state::FormulaDomain::WorkbookCell { .. } => unreachable!(),
@@ -386,7 +401,7 @@ mod event {
     use hermes_desktop_lib as lib;
     use leptos::prelude::{ReadUntracked, Update, WithUntracked};
 
-    #[cfg_attr(feature = "tracing", tracing::instrument(level = "debug", skip(state)))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(level = "debug", skip_all))]
     pub fn handle_events(
         events: Vec<Result<lib::event::Event, lib::event::Error>>,
         state: &state::State,
@@ -431,14 +446,26 @@ mod event {
     }
 
     fn process_event_file_modified(event: lib::event::Event, state: &state::State) {
+        use typed_path::Utf8TypedPath;
+
         let lib::event::Event::File(lib::event::File::Modified { path, data }) = event else {
             panic!("invalid event kind");
         };
 
-        let Ok(rel_path) = path.strip_prefix(state.root_path()) else {
-            return;
+        let file = {
+            let path = path.to_string_lossy();
+            let root_path = state.root_path().to_string_lossy();
+            let path = Utf8TypedPath::derive(&path);
+            let root_path = Utf8TypedPath::derive(&root_path);
+
+            let Ok(rel_path) = path.strip_prefix(root_path) else {
+                return;
+            };
+            let rel_path = rel_path.with_unix_encoding();
+            let rel_path = std::path::PathBuf::from(rel_path.as_str());
+            state.directory_tree.get_file_by_path(rel_path)
         };
-        let Some(file) = state.directory_tree.get_file_by_path(rel_path) else {
+        let Some(file) = file else {
             return;
         };
 

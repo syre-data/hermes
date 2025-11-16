@@ -1,4 +1,4 @@
-use crate::data;
+use crate::{ResourceId, data};
 use hermes_core as core;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -15,6 +15,23 @@ pub struct Update {
     pub updates: Updates,
 }
 
+impl Update {
+    pub fn formulas(&self) -> Vec<ResourceId> {
+        match &self.updates {
+            Updates::Csv(updates) => updates
+                .iter()
+                .map(|update| update.formula())
+                .cloned()
+                .collect(),
+            Updates::Workbook(updates) => updates
+                .iter()
+                .map(|update| update.formula())
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, derive_more::From, Clone, Debug)]
 pub enum Updates {
     Csv(Vec<UpdateCsv>),
@@ -23,49 +40,124 @@ pub enum Updates {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UpdateCsv {
-    pub row: core::data::IndexType,
-    pub col: core::data::IndexType,
-    pub value: core::expr::Value,
+    formula: ResourceId,
+    row: core::data::IndexType,
+    col: core::data::IndexType,
+    value: core::expr::Value,
+}
+
+impl UpdateCsv {
+    pub fn new(
+        formula: ResourceId,
+        row: core::data::IndexType,
+        col: core::data::IndexType,
+        value: core::expr::Value,
+    ) -> Self {
+        Self {
+            formula,
+            row,
+            col,
+            value,
+        }
+    }
+
+    /// # Returns
+    /// Tuple of `(formula, row, col, value)`.
+    pub fn into_parts(
+        self,
+    ) -> (
+        ResourceId,
+        core::data::IndexType,
+        core::data::IndexType,
+        core::expr::Value,
+    ) {
+        let Self {
+            formula,
+            row,
+            col,
+            value,
+        } = self;
+        (formula, row, col, value)
+    }
+
+    pub fn formula(&self) -> &ResourceId {
+        &self.formula
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UpdateWorkbook {
-    pub sheet: core::data::IndexType,
-    pub row: core::data::IndexType,
-    pub col: core::data::IndexType,
-    pub value: core::expr::Value,
+    formula: ResourceId,
+    sheet: core::data::IndexType,
+    row: core::data::IndexType,
+    col: core::data::IndexType,
+    value: core::expr::Value,
+}
+
+impl UpdateWorkbook {
+    pub fn new(
+        formula: ResourceId,
+        sheet: core::data::IndexType,
+        row: core::data::IndexType,
+        col: core::data::IndexType,
+        value: core::expr::Value,
+    ) -> Self {
+        Self {
+            formula,
+            sheet,
+            row,
+            col,
+            value,
+        }
+    }
+
+    pub fn formula(&self) -> &ResourceId {
+        &self.formula
+    }
 }
 
 pub mod error {
-    use crate::data;
+    use crate::{ResourceId, data};
     use serde::{Deserialize, Serialize};
-    use std::io;
+    use std::{io, path::PathBuf};
+
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    pub struct WorkspaceOrder {
+        formulas: Vec<ResourceId>,
+        kind: WorkspaceOrderKind,
+    }
+
+    impl WorkspaceOrder {
+        pub fn new(formulas: Vec<ResourceId>, kind: WorkspaceOrderKind) -> Self {
+            Self { formulas, kind }
+        }
+
+        pub fn into_parts(self) -> (Vec<ResourceId>, WorkspaceOrderKind) {
+            let Self { formulas, kind } = self;
+            (formulas, kind)
+        }
+
+        pub fn formulas(&self) -> &Vec<ResourceId> {
+            &self.formulas
+        }
+    }
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
 
-    pub enum WorkspaceOrder {
+    pub enum WorkspaceOrderKind {
         /// The task could not be completed.
         TaskNotCompleted,
         /// File could not be opened.
-        OpenFile(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
+        OpenFile {
+            path: PathBuf,
+            #[serde(with = "io_error_serde::ErrorKind")]
+            error: io::ErrorKind,
+        },
         /// File could not be saved.
-        Save(#[serde(with = "io_error_serde::ErrorKind")] io::ErrorKind),
-    }
-
-    impl From<data::error::LoadCsv> for WorkspaceOrder {
-        fn from(value: data::error::LoadCsv) -> Self {
-            match value {
-                data::error::LoadCsv::Io(err) => Self::OpenFile(err),
-                data::error::LoadCsv::DataTooLarge => todo!(),
-            }
-        }
-    }
-
-    impl From<data::error::SaveCsv> for WorkspaceOrder {
-        fn from(value: data::error::SaveCsv) -> Self {
-            match value {
-                data::error::SaveCsv::Io(err) => Self::Save(err),
-            }
-        }
+        Save {
+            path: PathBuf,
+            #[serde(with = "io_error_serde::ErrorKind")]
+            error: io::ErrorKind,
+        },
     }
 }

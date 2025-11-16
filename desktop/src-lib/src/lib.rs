@@ -3,7 +3,18 @@ pub mod event;
 pub mod formula;
 pub mod fs;
 
+#[derive(
+    Clone, derive_more::Deref, Hash, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Deserialize, serde::Serialize, 
+)]
+pub struct ResourceId(uuid::Uuid);
+impl ResourceId {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+}
+
 pub mod utils {
+    /// `Serialize` and `Deserialize` `OsString` using `.to_string_lossy()`.
     pub mod serialize_os_string {
         use std::{
             ffi::{OsStr, OsString},

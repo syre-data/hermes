@@ -1,9 +1,10 @@
 use crate::{
     icon,
-    state::{self, ResourceId},
+    state,
 };
 use leptos::prelude::*;
 use leptos_icons::Icon;
+use hermes_desktop_lib as lib;
 
 #[component]
 pub fn Messages() -> impl IntoView {
@@ -37,7 +38,7 @@ pub fn Message(message: Message) -> impl IntoView {
 
 #[derive(Debug, Clone)]
 pub struct Message {
-    id: ResourceId,
+    id: lib::ResourceId,
     kind: Kind,
     title: String,
     body: Option<String>,
@@ -46,7 +47,7 @@ pub struct Message {
 impl Message {
     pub fn error(title: impl Into<String>) -> Self {
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             kind: Kind::Error,
             title: title.into(),
             body: None,
@@ -55,14 +56,14 @@ impl Message {
 
     pub fn error_with_body(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             kind: Kind::Error,
             title: title.into(),
             body: Some(body.into()),
         }
     }
 
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.id
     }
 }

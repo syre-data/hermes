@@ -13,15 +13,7 @@ const CANVAS_ROWS_DEFAULT: core::data::IndexType = 100;
 const CANVAS_COLS_DEFAULT: core::data::IndexType = 26;
 
 pub trait FileResource {
-    fn file(&self) -> &ResourceId;
-}
-
-#[derive(Clone, derive_more::Deref, Hash, PartialEq, Eq, Debug)]
-pub struct ResourceId(uuid::Uuid);
-impl ResourceId {
-    pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
-    }
+    fn file(&self) -> &lib::ResourceId;
 }
 
 /// Abort handle used to cancel loading a workbook.
@@ -57,7 +49,7 @@ impl WorkspaceOwner {
 pub enum ActiveDataset {
     None,
     Some {
-        id: ResourceId,
+        id: lib::ResourceId,
         active_cell: RwSignal<ActiveCell>,
     },
 }
@@ -72,7 +64,7 @@ impl ActiveDataset {
     }
 
     /// Sets `self` to `Self::Some { id: <id>, active_cell: ActiveCell::None }`.
-    pub fn insert(&mut self, id: ResourceId) {
+    pub fn insert(&mut self, id: lib::ResourceId) {
         *self = Self::Some {
             id,
             active_cell: RwSignal::new(ActiveCell::None),
@@ -83,7 +75,7 @@ impl ActiveDataset {
         *self = Self::None
     }
 
-    pub fn as_ref(&self) -> Option<&ResourceId> {
+    pub fn as_ref(&self) -> Option<&lib::ResourceId> {
         match self {
             Self::None => None,
             Self::Some { id, active_cell } => Some(id),
@@ -92,7 +84,7 @@ impl ActiveDataset {
 
     pub fn map<F, T>(self, f: F) -> Option<T>
     where
-        F: FnOnce(ResourceId) -> T,
+        F: FnOnce(lib::ResourceId) -> T,
     {
         match self {
             Self::None => None,
@@ -128,11 +120,11 @@ pub struct State {
     pub messages: RwSignal<Vec<message::Message>>,
     pub directory_tree: DirectoryTree,
     /// Active resources.
-    pub selected_files: RwSignal<Vec<ResourceId>>,
+    pub selected_files: RwSignal<Vec<lib::ResourceId>>,
     pub active_dataset: RwSignal<ActiveDataset>,
     pub datasets: Datasets,
     pub formulas: Formulas,
-    pub active_formula: RwSignal<Option<ResourceId>>,
+    pub active_formula: RwSignal<Option<lib::ResourceId>>,
     pub canvas: Canvas,
 }
 
@@ -279,14 +271,14 @@ pub enum Dataset {
 }
 
 impl Dataset {
-    pub fn new(file: ResourceId, dataset: lib::data::Dataset) -> Self {
+    pub fn new(file: lib::ResourceId, dataset: lib::data::Dataset) -> Self {
         match dataset {
             lib::data::Dataset::Csv(csv) => Self::Csv(Csv::new(file, csv)),
             lib::data::Dataset::Workbook(workbook) => Self::Workbook(Workbook::new(file, workbook)),
         }
     }
 
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         match self {
             Self::Csv(csv) => csv.id(),
             Self::Workbook(workbook) => workbook.id(),
@@ -303,7 +295,7 @@ impl Dataset {
 }
 
 impl FileResource for Dataset {
-    fn file(&self) -> &ResourceId {
+    fn file(&self) -> &lib::ResourceId {
         match self {
             Self::Csv(csv) => csv.file(),
             Self::Workbook(workbook) => workbook.file(),
@@ -326,14 +318,31 @@ impl core::expr::Context for &Dataset {
 
 #[derive(Clone)]
 pub struct Csv {
-    file: ResourceId,
+    file: lib::ResourceId,
     inner: lib::data::Csv,
     sheet: Spreadsheet,
 }
 
 impl Csv {
-    pub fn new(file: ResourceId, csv: lib::data::Csv) -> Self {
-        let cells = csv.sheet.cells().clone();
+    pub fn new(file: lib::ResourceId, csv: lib::data::Csv) -> Self {
+        use core::expr::Value;
+
+        let cells = csv
+            .sheet
+            .cells()
+            .iter()
+            .filter(|(_, value)| match value {
+                Value::Empty => false,
+                Value::String(value) => !value.is_empty(),
+                Value::Int(_) => true,
+                Value::Float(_) => true,
+                Value::Bool(_) => true,
+                Value::DateTime(date_time) => true,
+                Value::Duration(duration) => true,
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<lib::data::CellMap>();
+
         Self {
             file,
             inner: csv,
@@ -341,7 +350,7 @@ impl Csv {
         }
     }
 
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.file
     }
 
@@ -350,9 +359,21 @@ impl Csv {
     }
 
     pub fn set_data(&mut self, data: lib::data::Csv) {
+        use core::expr::Value;
+
         self.sheet.cells.update(|cells| {
             cells.clear();
-            for (idx, value) in data.sheet.iter() {
+
+            let cells_with_value = data.sheet.iter().filter(|(_, value)| match value {
+                Value::Empty => false,
+                Value::String(value) => !value.is_empty(),
+                Value::Int(_) => true,
+                Value::Float(_) => true,
+                Value::Bool(_) => true,
+                Value::DateTime(date_time) => true,
+                Value::Duration(duration) => true,
+            });
+            for (idx, value) in cells_with_value {
                 cells.insert(idx.clone(), CellValue::Fixed(value.clone()));
             }
         });
@@ -362,7 +383,7 @@ impl Csv {
 }
 
 impl FileResource for Csv {
-    fn file(&self) -> &ResourceId {
+    fn file(&self) -> &lib::ResourceId {
         &self.file
     }
 }
@@ -404,14 +425,14 @@ impl core::expr::Context for &Csv {
 #[derive(Clone)]
 pub struct Workbook {
     /// Associated file id.
-    file: ResourceId,
+    file: lib::ResourceId,
     inner: RwSignal<lib::data::Workbook>,
     pub sheets: RwSignal<Vec<Spreadsheet>>,
     pub active_sheet: RwSignal<usize>,
 }
 
 impl Workbook {
-    pub fn new(file: ResourceId, workbook: lib::data::Workbook) -> Self {
+    pub fn new(file: lib::ResourceId, workbook: lib::data::Workbook) -> Self {
         let sheets = workbook
             .sheets()
             .iter()
@@ -430,13 +451,13 @@ impl Workbook {
     ///
     /// # Returns
     /// `ResourceId` for the workbook and associated file.
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.file
     }
 }
 
 impl FileResource for Workbook {
-    fn file(&self) -> &ResourceId {
+    fn file(&self) -> &lib::ResourceId {
         &self.file
     }
 }
@@ -497,7 +518,7 @@ impl core::expr::Context for &Workbook {
 pub type CellMap = BTreeMap<core::data::CellIndex, CellValue>;
 pub type FormulaCellValue = Result<lib::data::Data, core::expr::Error>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CellValue {
     Fixed(lib::data::Data),
     Variable(RwSignal<VariableCellValue>),
@@ -538,7 +559,7 @@ impl VariableCellValue {
 
 #[derive(Clone)]
 pub struct Spreadsheet {
-    id: ResourceId,
+    id: lib::ResourceId,
     pub name: RwSignal<String>,
     pub cells: RwSignal<CellMap>,
     /// Bounding rectangle to enclose all data, `(rows, cols)`.
@@ -557,18 +578,22 @@ impl Spreadsheet {
         const COL_BUFFER: core::data::IndexType = 26;
 
         let size_fixed = {
-            let mut max_row = 0;
-            let mut max_col = 0;
-            for idx in cells.keys() {
-                if idx.row() > max_row {
-                    max_row = idx.row() + 1;
+            if cells.is_empty() {
+                (0, 0)
+            } else {
+                let mut max_row = 0;
+                let mut max_col = 0;
+                for idx in cells.keys() {
+                    if idx.row() > max_row {
+                        max_row = idx.row();
+                    }
+                    if idx.col() > max_col {
+                        max_col = idx.col();
+                    }
                 }
-                if idx.col() > max_col {
-                    max_col = idx.col() + 1;
-                }
-            }
 
-            (max_row, max_col)
+                (max_row + 1, max_col + 1)
+            }
         };
 
         let mut cells = cells
@@ -580,23 +605,27 @@ impl Spreadsheet {
         let size = Signal::derive({
             let cells = cells.read_only();
             move || {
-                let mut max_row = 0;
-                let mut max_col = 0;
-                for idx in cells.read().keys() {
-                    if idx.row() > max_row {
-                        max_row = idx.row() + 1;
+                if cells.read().is_empty() {
+                    (0, 0)
+                } else {
+                    let mut max_row = 0;
+                    let mut max_col = 0;
+                    for idx in cells.read().keys() {
+                        if idx.row() > max_row {
+                            max_row = idx.row();
+                        }
+                        if idx.col() > max_col {
+                            max_col = idx.col();
+                        }
                     }
-                    if idx.col() > max_col {
-                        max_col = idx.col() + 1;
-                    }
-                }
 
-                (max_row, max_col)
+                    (max_row + 1, max_col + 1)
+                }
             }
         });
 
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             name: RwSignal::new(name.into()),
             cells,
             size,
@@ -604,7 +633,7 @@ impl Spreadsheet {
         }
     }
 
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.id
     }
 
@@ -621,7 +650,7 @@ impl Formulas {
         Self(RwSignal::new(vec![]))
     }
 
-    pub fn get(&self, id: &ResourceId) -> Option<Formula> {
+    pub fn get(&self, id: &lib::ResourceId) -> Option<Formula> {
         self.read_untracked()
             .iter()
             .find(|formula| formula.id() == id)
@@ -642,7 +671,7 @@ impl Formulas {
 
 #[derive(Clone)]
 pub struct Formula {
-    id: ResourceId,
+    id: lib::ResourceId,
     pub domain: RwSignal<FormulaDomain>,
     pub value: RwSignal<String>,
 }
@@ -650,13 +679,13 @@ pub struct Formula {
 impl Formula {
     pub fn new(domain: FormulaDomain) -> Self {
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             domain: RwSignal::new(domain),
             value: RwSignal::new("".to_string()),
         }
     }
 
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.id
     }
 }
@@ -665,14 +694,14 @@ impl Formula {
 pub enum FormulaDomain {
     /// A single cell in a csv.
     CsvCell {
-        dataset: ResourceId,
+        dataset: lib::ResourceId,
         cell: core::data::CellIndex,
     },
 
     /// A single cell in a workbook.
     WorkbookCell {
-        dataset: ResourceId,
-        sheet: ResourceId,
+        dataset: lib::ResourceId,
+        sheet: lib::ResourceId,
         cell: core::data::CellIndex,
     },
 }
@@ -701,12 +730,12 @@ impl FormulaDomain {
 
 #[derive(Clone)]
 pub struct File {
-    id: ResourceId,
+    id: lib::ResourceId,
     pub name: RwSignal<OsString>,
 }
 
 impl File {
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.id
     }
 }
@@ -714,7 +743,7 @@ impl File {
 impl From<OsString> for File {
     fn from(value: OsString) -> Self {
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             name: RwSignal::new(value),
         }
     }
@@ -749,13 +778,13 @@ impl FileList {
 
 #[derive(Clone)]
 pub struct Directory {
-    id: ResourceId,
+    id: lib::ResourceId,
     pub name: RwSignal<OsString>,
     pub files: FileList,
 }
 
 impl Directory {
-    pub fn id(&self) -> &ResourceId {
+    pub fn id(&self) -> &lib::ResourceId {
         &self.id
     }
 }
@@ -766,7 +795,7 @@ impl From<lib::fs::Directory> for Directory {
         let files = files.into_iter().map(|file| file.into()).collect();
 
         Self {
-            id: ResourceId::new(),
+            id: lib::ResourceId::new(),
             name: RwSignal::new(name),
             files: FileList::with_files(files),
         }
@@ -804,7 +833,7 @@ impl DirectoryTree {
     ///
     /// # Notes
     /// + Indexes are not stable across write operations.
-    fn index(&self, directory: &ResourceId) -> Option<usize> {
+    fn index(&self, directory: &lib::ResourceId) -> Option<usize> {
         self.directories
             .read_untracked()
             .iter()
@@ -812,7 +841,7 @@ impl DirectoryTree {
     }
 
     /// Create a `leptos::Signal` tracking the index of the directory.
-    fn index_tracked(&self, directory: ResourceId) -> Signal<Option<usize>> {
+    fn index_tracked(&self, directory: lib::ResourceId) -> Signal<Option<usize>> {
         Signal::derive({
             let directories = self.directories.read_only();
             move || {
@@ -836,7 +865,7 @@ impl DirectoryTree {
             .ok_or(lib::fs::error::NodeDoesNotExist)
     }
 
-    pub fn get_file_by_id(&self, id: &ResourceId) -> Option<File> {
+    pub fn get_file_by_id(&self, id: &lib::ResourceId) -> Option<File> {
         self.directories
             .read_untracked()
             .iter()
@@ -851,7 +880,7 @@ impl DirectoryTree {
     }
 
     /// Gets the current path to the file relative to the directory tree root.
-    pub fn get_file_path(&self, id: &ResourceId) -> Option<PathBuf> {
+    pub fn get_file_path(&self, id: &lib::ResourceId) -> Option<PathBuf> {
         let (parent_idx, filename) =
             self.directories
                 .read_untracked()
@@ -881,6 +910,10 @@ impl DirectoryTree {
         let dir_path = path.as_ref().parent()?;
         let mut cur_dir = Self::ROOT;
         for component in dir_path.components() {
+            if matches!(component, Component::RootDir) {
+                continue;
+            }
+
             let Component::Normal(dir_name) = component else {
                 panic!("invalid path");
             };
@@ -966,7 +999,7 @@ impl DirectoryTree {
 
     pub fn children(
         &self,
-        parent: ResourceId,
+        parent: lib::ResourceId,
     ) -> Signal<Result<Vec<Directory>, lib::fs::error::NodeDoesNotExist>> {
         let parent_idx = self.index_tracked(parent);
         Signal::derive({

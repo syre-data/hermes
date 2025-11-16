@@ -487,6 +487,9 @@
   .text-secondary-700 {
     color: var(--color-secondary-700);
   }
+  .text-secondary-800 {
+    color: var(--color-secondary-800);
+  }
   .uppercase {
     text-transform: uppercase;
   }
@@ -680,6 +683,11 @@
   .dark\:bg-secondary-800 {
     &:where(.dark, .dark *) {
       background-color: var(--color-secondary-800);
+    }
+  }
+  .dark\:text-secondary-100 {
+    &:where(.dark, .dark *) {
+      color: var(--color-secondary-100);
     }
   }
   .dark\:text-secondary-200 {

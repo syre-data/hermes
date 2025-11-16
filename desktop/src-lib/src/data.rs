@@ -1,6 +1,6 @@
 use hermes_core as core;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, io};
 
 #[cfg(feature = "fs")]
 use std::{fs, path::Path};
@@ -147,9 +147,19 @@ impl Csv {
         reader.try_into()
     }
 
+    pub fn from_reader<R>(reader: R) -> Result<Self, error::LoadCsv>
+    where
+        R: io::Read,
+    {
+        let reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(reader);
+
+        reader.try_into()
+    }
+
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, error::LoadCsv> {
-        let mut cells = CellMap::new();
-        let mut reader = csv::ReaderBuilder::new()
+        let reader = csv::ReaderBuilder::new()
             .has_headers(false)
             .from_path(path)?;
 
@@ -175,10 +185,13 @@ impl Csv {
 }
 
 #[cfg(feature = "fs")]
-impl TryFrom<csv::Reader<fs::File>> for Csv {
+impl<R> TryFrom<csv::Reader<R>> for Csv
+where
+    R: io::Read,
+{
     type Error = error::LoadCsv;
 
-    fn try_from(mut reader: csv::Reader<fs::File>) -> Result<Self, Self::Error> {
+    fn try_from(mut reader: csv::Reader<R>) -> Result<Self, Self::Error> {
         let mut cells = CellMap::new();
         for (row, result) in reader.records().enumerate() {
             let record = result.expect("result is valid");
@@ -248,7 +261,9 @@ pub enum Dataset {
 }
 
 fn str_value_to_data(value: &str) -> Data {
-    if let Ok(value) = value.parse::<i64>() {
+    if value.is_empty() {
+        Data::Empty
+    } else if let Ok(value) = value.parse::<i64>() {
         Data::Int(value)
     } else if let Ok(value) = value.parse::<f64>() {
         Data::Float(value)
