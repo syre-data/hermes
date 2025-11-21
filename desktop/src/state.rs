@@ -264,7 +264,7 @@ impl Datasets {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, derive_more::From)]
 pub enum Dataset {
     Csv(Csv),
     Workbook(Workbook),
@@ -728,15 +728,36 @@ impl FormulaDomain {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum FsResourceLocation {
+    /// The fs resource exists on disk.
+    FileSystem,
+    /// The fs resource only exists in the app.
+    App,
+}
+
 #[derive(Clone)]
 pub struct File {
     id: lib::ResourceId,
+    fs_location: FsResourceLocation,
     pub name: RwSignal<OsString>,
 }
 
 impl File {
+    pub fn new_from_app(name: impl Into<OsString>) -> Self {
+        Self {
+            id: lib::ResourceId::new(),
+            fs_location: FsResourceLocation::App,
+            name: RwSignal::new(name.into()),
+        }
+    }
+
     pub fn id(&self) -> &lib::ResourceId {
         &self.id
+    }
+
+    pub fn fs_location(&self) -> FsResourceLocation {
+        self.fs_location
     }
 }
 
@@ -744,6 +765,7 @@ impl From<OsString> for File {
     fn from(value: OsString) -> Self {
         Self {
             id: lib::ResourceId::new(),
+            fs_location: FsResourceLocation::FileSystem,
             name: RwSignal::new(value),
         }
     }
@@ -762,12 +784,18 @@ impl FileList {
         let files = RwSignal::new(files);
         let _sort_guard = Effect::watch(
             move || {
-                files.read().iter().for_each(|file| file.name.track());
-            },
-            move |_, _, _| {
-                let mut files = files.get_untracked();
-                files.sort_by_key(|file| file.name.get_untracked());
                 files
+                    .read()
+                    .iter()
+                    .map(|file| file.name.get())
+                    .collect::<Vec<_>>()
+            },
+            move |names, _, _| {
+                if names.is_sorted() {
+                    return;
+                }
+
+                files.update(|files| files.sort_by_key(|file| file.name.get_untracked()));
             },
             true,
         );
@@ -779,6 +807,7 @@ impl FileList {
 #[derive(Clone)]
 pub struct Directory {
     id: lib::ResourceId,
+    fs_location: FsResourceLocation,
     pub name: RwSignal<OsString>,
     pub files: FileList,
 }
@@ -796,16 +825,30 @@ impl From<lib::fs::Directory> for Directory {
 
         Self {
             id: lib::ResourceId::new(),
+            fs_location: FsResourceLocation::FileSystem,
             name: RwSignal::new(name),
             files: FileList::with_files(files),
         }
     }
 }
 
+#[derive(Clone, Default)]
+pub enum DirectoryTreeCreationSlot {
+    #[default]
+    None,
+    Directory {
+        parent: PathBuf,
+    },
+    File {
+        parent: PathBuf,
+    },
+}
+
 #[derive(Clone)]
 pub struct DirectoryTree {
     directories: RwSignal<Vec<Directory>>,
     parents: RwSignal<Vec<usize>>,
+    pub creation_slot: RwSignal<DirectoryTreeCreationSlot>,
 }
 
 impl DirectoryTree {
@@ -821,6 +864,7 @@ impl DirectoryTree {
         Self {
             directories: RwSignal::new(directories),
             parents: RwSignal::new(graph.parents().clone()),
+            creation_slot: RwSignal::new(DirectoryTreeCreationSlot::default()),
         }
     }
 
@@ -938,6 +982,28 @@ impl DirectoryTree {
             .iter()
             .find(|file| file.name.with_untracked(|name| name == filename))
             .cloned()
+    }
+
+    /// Gets the current path to the directory relative to the directory tree root.
+    pub fn get_directory_path(&self, id: &lib::ResourceId) -> Option<PathBuf> {
+        let idx = self
+            .directories
+            .read_untracked()
+            .iter()
+            .enumerate()
+            .find_map(|(idx, directory)| (directory.id() == id).then_some(idx))?;
+
+        let ancestors = self.ancestors_idx(idx).ok()?;
+        let path = self.directories.with_untracked(move |directories| {
+            ancestors
+                .into_iter()
+                .rev()
+                .skip(1)
+                .map(|idx| directories[idx].name.get_untracked())
+                .collect::<PathBuf>()
+        });
+
+        Some(path)
     }
 
     /// # Returns

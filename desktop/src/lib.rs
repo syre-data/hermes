@@ -63,7 +63,7 @@ mod icon {
     pub use icondata::{
         AiCloseOutlined as Close, AiLoading3QuartersOutlined as LoadingSpinner,
         AiMinusOutlined as Remove, AiPlusOutlined as Add, FaEqualsSolid as Equal,
-        MdiFunction as Function,
+        MdiFunction as Function, FaFileCirclePlusSolid as NewFile,
     };
 }
 

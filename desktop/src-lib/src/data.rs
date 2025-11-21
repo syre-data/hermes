@@ -141,6 +141,14 @@ pub struct Csv {
     pub sheet: Spreadsheet,
 }
 
+impl Csv {
+    pub fn new() -> Self {
+        Self {
+            sheet: Spreadsheet::new(),
+        }
+    }
+}
+
 #[cfg(feature = "fs")]
 impl Csv {
     pub fn from_csv_reader(reader: csv::Reader<fs::File>) -> Result<Self, error::LoadCsv> {
@@ -221,6 +229,10 @@ pub struct Workbook {
 }
 
 impl Workbook {
+    pub fn new() -> Self {
+        Self { sheets: vec![] }
+    }
+
     pub fn sheet_names(&self) -> Vec<&String> {
         self.sheets.iter().map(|(name, _)| name).collect()
     }

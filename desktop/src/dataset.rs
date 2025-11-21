@@ -53,8 +53,8 @@ pub fn Workspace() -> impl IntoView {
                             Some(
                                 either!(
                                     dataset,
-                                    state::Dataset::Csv(csv) => view! { <Csv csv /> },
-                                    state::Dataset::Workbook(workbook) => view! { <Workbook workbook /> },
+                                    state::Dataset::Csv(csv) => view! { <Csv csv=csv.clone() /> },
+                                    state::Dataset::Workbook(workbook) => view! { <Workbook workbook=workbook.clone() /> },
                                 ),
                             )
                         } else {

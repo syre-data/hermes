@@ -142,11 +142,6 @@ fn WorkspaceView(root: PathBuf, graph: lib::fs::DirectoryTree) -> impl IntoView 
                         class="border-l-secondary-50 dark:border-l-secondary-700 \
                         border-b-secondary-50 dark:border-b-secondary-700"
                     />
-                    <explorer::OutputFiles
-                        {..}
-                        class="border-l-secondary-50 dark:border-l-secondary-700 \
-                        border-b border-b-secondary-50 dark:border-b-secondary-700"
-                    />
                     <explorer::ActiveFiles
                         {..}
                         class="border-l-secondary-50 dark:border-l-secondary-700 \
@@ -184,6 +179,8 @@ mod run {
     #[component]
     pub fn Run() -> impl IntoView {
         let state = expect_context::<state::State>();
+        let formula_editor_vis = expect_context::<state::FormulaEditorVisibility>();
+
         let disabled = {
             let formulas = state.formulas.read_only();
             move || formulas.read().is_empty()
@@ -209,8 +206,25 @@ mod run {
                             .formulas
                             .write()
                             .retain(|formula| err_formulas.contains(&formula.id()));
+
+                        if state.active_formula.with_untracked(|active| {
+                            if let Some(active) = active.as_ref() {
+                                !state
+                                    .formulas
+                                    .read()
+                                    .iter()
+                                    .any(|formula| formula.id() == active)
+                            } else {
+                                false
+                            }
+                        }) {
+                            formula_editor_vis.set(false);
+                            state.active_formula.set(None);
+                        }
                     } else {
                         state.formulas.write().clear();
+                        formula_editor_vis.set(false);
+                        state.active_formula.set(None);
                     };
                 }
             }

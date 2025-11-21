@@ -37,6 +37,7 @@
     --color-secondary-800: #2b2e33;
     --color-secondary-900: #181a1e;
     --color-brand-red-500: #d5410b;
+    --color-brand-red-600: #b33000;
     --font-primary: Oddity, Roboto, Inter, Avenir, Helvetica, Arial, sans-serif;
     --font-secondary: Roboto, Inter, Avenir, Helvetica, Arial, sans-serif;
   }
@@ -190,6 +191,9 @@
   }
 }
 @layer utilities {
+  .invisible {
+    visibility: hidden;
+  }
   .absolute {
     position: absolute;
   }
@@ -249,6 +253,9 @@
   }
   .w-\[2px\] {
     width: 2px;
+  }
+  .w-full {
+    width: 100%;
   }
   .input-compact {
     max-width: 100%;
@@ -448,6 +455,15 @@
   .p-2 {
     padding: calc(var(--spacing) * 2);
   }
+  .px-2 {
+    padding-inline: calc(var(--spacing) * 2);
+  }
+  .px-px {
+    padding-inline: 1px;
+  }
+  .py-1 {
+    padding-block: calc(var(--spacing) * 1);
+  }
   .py-4 {
     padding-block: calc(var(--spacing) * 4);
   }
@@ -484,6 +500,12 @@
   .text-nowrap {
     text-wrap: nowrap;
   }
+  .text-brand-red-600 {
+    color: var(--color-brand-red-600);
+  }
+  .text-primary-700 {
+    color: var(--color-primary-700);
+  }
   .text-secondary-700 {
     color: var(--color-secondary-700);
   }
@@ -493,9 +515,30 @@
   .uppercase {
     text-transform: uppercase;
   }
+  .ring {
+    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .ring-brand-red-600 {
+    --tw-ring-color: var(--color-brand-red-600);
+  }
   .select-none {
     -webkit-user-select: none;
     user-select: none;
+  }
+  .group-hover\:visible {
+    &:is(:where(.group):hover *) {
+      @media (hover: hover) {
+        visibility: visible;
+      }
+    }
+  }
+  .group-hover\:block {
+    &:is(:where(.group):hover *) {
+      @media (hover: hover) {
+        display: block;
+      }
+    }
   }
   .group-hover\/file\:block {
     &:is(:where(.group\/file):hover *) {
@@ -651,6 +694,11 @@
       }
     }
   }
+  .invalid\:ring-brand-red-600 {
+    &:invalid {
+      --tw-ring-color: var(--color-brand-red-600);
+    }
+  }
   .hover\:border-primary-600 {
     &:hover {
       @media (hover: hover) {
@@ -662,6 +710,13 @@
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-secondary-50);
+      }
+    }
+  }
+  .focus-visible\:invalid\:ring-brand-red-600 {
+    &:focus-visible {
+      &:invalid {
+        --tw-ring-color: var(--color-brand-red-600);
       }
     }
   }
@@ -683,6 +738,11 @@
   .dark\:bg-secondary-800 {
     &:where(.dark, .dark *) {
       background-color: var(--color-secondary-800);
+    }
+  }
+  .dark\:text-primary-500 {
+    &:where(.dark, .dark *) {
+      color: var(--color-primary-500);
     }
   }
   .dark\:text-secondary-100 {
