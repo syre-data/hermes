@@ -101,7 +101,7 @@
 }
 
 @utility btn-cmd {
-  @apply p-1 rounded-xs cursor-pointer;
+  @apply p-[2px] aspect-square rounded-xs cursor-pointer;
 }
 
 @utility input-simple {

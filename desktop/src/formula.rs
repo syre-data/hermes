@@ -132,7 +132,7 @@ fn Formula(formula: state::Formula) -> impl IntoView {
 
     view! {
         <div
-            class="flex items-end group/formula cursor-pointer hover:bg-secondary-50 dark:hover:bg-secondary-700"
+            class="flex gap-1 items-center px-px cursor-pointer group/formula hover:bg-secondary-50 dark:hover:bg-secondary-700"
             class=(["bg-secondary-50", "dark:bg-secondary-700"], is_active.clone())
             on:mousedown=set_as_active
         >
@@ -140,8 +140,8 @@ fn Formula(formula: state::Formula) -> impl IntoView {
             <small class="truncate text-secondary-700 dark:text-secondary-200" title=path.clone()>
                 {path.clone()}
             </small>
-            <div class="hidden group-hover/formula:block">
-                <button type="button" class="btn-cmd btn-secondary" on:mousedown=remove>
+            <div class="flex gap-1 items-center hidden group-hover/formula:block">
+                <button type="button" class="btn-cmd btn-secondary block" on:mousedown=remove>
                     <Icon icon=icon::Remove />
                 </button>
             </div>

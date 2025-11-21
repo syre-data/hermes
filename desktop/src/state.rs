@@ -853,6 +853,7 @@ pub struct DirectoryTree {
 
 impl DirectoryTree {
     pub const ROOT: usize = 0;
+    pub const ROOT_PATH: &str = "/";
 
     pub fn from_graph(graph: lib::fs::DirectoryTree) -> Self {
         let directories = graph
@@ -938,12 +939,13 @@ impl DirectoryTree {
 
         let ancestors = self.ancestors_idx(parent_idx).ok()?;
         let path = self.directories.with_untracked(move |directories| {
-            ancestors
+            let path = ancestors
                 .into_iter()
                 .rev()
                 .skip(1)
                 .map(|idx| directories[idx].name.get_untracked())
-                .collect::<PathBuf>()
+                .collect::<PathBuf>();
+            PathBuf::from(Self::ROOT_PATH).join(path)
         });
 
         Some(path.join(filename))
@@ -995,12 +997,13 @@ impl DirectoryTree {
 
         let ancestors = self.ancestors_idx(idx).ok()?;
         let path = self.directories.with_untracked(move |directories| {
-            ancestors
+            let path = ancestors
                 .into_iter()
                 .rev()
                 .skip(1)
                 .map(|idx| directories[idx].name.get_untracked())
-                .collect::<PathBuf>()
+                .collect::<PathBuf>();
+            PathBuf::from(Self::ROOT_PATH).join(path)
         });
 
         Some(path)

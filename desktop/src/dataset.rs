@@ -347,7 +347,7 @@ fn FormulaEditor(#[prop(optional, into)] class: String) -> impl IntoView {
         false,
     );
 
-    let root_class = format!("flex gap-1 bg-white dark:bg-secondary-800 {class}");
+    let root_class = format!("flex gap-1 border-t border-t bg-white dark:bg-secondary-800 {class}");
     view! {
         <div class=root_class class:hidden=move || !formula_editor_vis.get()>
             <formula::Editor class="grow" />

@@ -144,7 +144,7 @@ mod active {
 
         view! {
             <div
-                class="flex gap-2 items-end px cursor-pointer group/file text-nowrap"
+                class="flex gap-1 items-center px-px cursor-pointer group/file text-nowrap"
                 class=(["bg-secondary-50", "dark:bg-secondary-700"], is_active.clone())
                 style:padding-left=format!("{LEVEL_PAD}{LEVEL_PAD_UNIT}")
                 on:mousedown=activate
@@ -156,9 +156,9 @@ mod active {
                 >
                     {path.clone()}
                 </small>
-                <div>
-                    <button class="hidden group-hover/file:block btn-cmd btn-secondary">
-                        <Icon icon=icon::Close on:mousedown=remove />
+                <div class="flex gap-1 items-center hidden group-hover/file:block">
+                    <button type="button" class="btn-cmd btn-secondary block" on:mousedown=remove>
+                        <Icon icon=icon::Close />
                     </button>
                 </div>
             </div>
@@ -248,7 +248,7 @@ mod nav {
             move || name.with(|name| name.to_string_lossy().to_string())
         };
 
-        let root_class = format!("flex group {}", class);
+        let root_class = format!("flex items-center group {}", class);
         view! {
             <div class=root_class>
                 <div class="grow font-bold uppercase" title=root_path>
@@ -360,7 +360,7 @@ mod nav {
         let path = state.directory_tree.get_directory_path(directory.id()).expect("directory to exist");
 
         view! {
-            <div class="flex group">
+            <div class="flex group items-center">
                 <div class="grow">{name}</div>
                 <div class="invisible group-hover:visible">
                     <commands::DirectoryCommands path />
@@ -485,8 +485,13 @@ mod nav {
         view! {
             <div on:mousedown=load_dataset class="flex group">
                 <div class="grow truncate text-primary-700 dark:text-primary-500">{name}</div>
-                <div class="flex hidden group-hover:block">
-                    <button type="button" class="block btn-cmd" on:mousedown=remove>
+                <div class="flex items-center invisible group-hover:visible">
+                    <button
+                        type="button"
+                        class="block btn-cmd btn-secondary"
+                        on:mousedown=remove
+                        title="Remove file"
+                    >
                         <Icon icon=icon::Remove />
                     </button>
                 </div>
@@ -514,6 +519,7 @@ mod nav {
                 let file_id = file_id.clone();
                 async move {
                     let path = directory_tree.get_file_path(&file_id).expect("file exists");
+                    let path = path.into_iter().skip(1).collect::<PathBuf>();
                     let path = root_path.join(path);
                     match load_dataset(path).await {
                         Ok(dataset) => {
@@ -785,7 +791,8 @@ mod nav {
                 let directory_tree = state.directory_tree.clone();
                 let id = parent.id().clone();
                 move |_| {
-                    if filename.read_untracked().is_empty() {
+                    let is_empty = filename.try_read_untracked().map(|name| name.is_empty()).unwrap_or(false);
+                    if is_empty {
                         let Some(path)  = directory_tree.get_directory_path(&id) else {
                             directory_tree.creation_slot.set(state::DirectoryTreeCreationSlot::None);
                             return;
@@ -871,13 +878,14 @@ mod nav {
             };
 
             view! {
-                <form on:submit=add_file class="w-full" on:blur=onblur>
+                <form on:submit=add_file class="w-full">
                     <div class="px-2 py-1">
                         <input
                             node_ref=input_node
                             type="text"
                             bind:value=(filename, set_filename)
                             on:input=oninput
+                            on:blur=onblur
                             class:ring-brand-red-600=move || {
                                 filename.with(|filename| !validate_filename(filename))
                             }
