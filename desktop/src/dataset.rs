@@ -73,18 +73,13 @@ fn NoActiveFile() -> impl IntoView {
 }
 
 #[component]
-fn Canvas(#[prop(optional, into)] class: Option<String>) -> impl IntoView {
+fn Canvas(#[prop(optional, into)] class: String) -> impl IntoView {
     const WRAPPER_CLASS: &'static str = "overflow-auto scrollbar-thin";
 
     let state = expect_context::<state::State>();
     let canvas = state.canvas;
 
-    let wrapper_class = if let Some(class) = class {
-        format!("{class} {WRAPPER_CLASS}")
-    } else {
-        WRAPPER_CLASS.to_string()
-    };
-
+    let wrapper_class = format!("{class} {WRAPPER_CLASS}");
     view! {
         <div class=wrapper_class>
             <table class="table-fixed">
@@ -322,7 +317,7 @@ fn Workbook(workbook: state::Workbook) -> impl IntoView {
 }
 
 #[component]
-fn FormulaEditor() -> impl IntoView {
+fn FormulaEditor(#[prop(optional, into)] class: String) -> impl IntoView {
     let state = expect_context::<state::State>();
     let formula_editor_vis = expect_context::<state::FormulaEditorVisibility>();
     let active_formula = state.active_formula.read_only();
@@ -352,14 +347,16 @@ fn FormulaEditor() -> impl IntoView {
         false,
     );
 
+    let root_class = format!("flex gap-1 bg-white dark:bg-secondary-800 {class}");
     view! {
-        <div
-            class="flex bg-white dark:bg-secondary-800"
-            class:hidden=move || !formula_editor_vis.get()
-        >
-            <formula::Editor />
+        <div class=root_class class:hidden=move || !formula_editor_vis.get()>
+            <formula::Editor class="grow" />
             <div>
-                <button type="button" class="cursor-pointer" on:mousedown=close_formula_editor>
+                <button
+                    type="button"
+                    class="cursor-pointer align-middle"
+                    on:mousedown=close_formula_editor
+                >
                     <Icon icon=icon::Close />
                 </button>
             </div>

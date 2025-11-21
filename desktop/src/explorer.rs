@@ -207,18 +207,15 @@ mod nav {
     const ROOT_PATH: &str = "/";
 
     #[component]
-    pub fn FileTree(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
+    pub fn FileTree(#[prop(optional, into)] class: String) -> impl IntoView {
         let state = expect_context::<state::State>();
         let root = state.directory_tree.root();
         let children = {
             let children = state.directory_tree.children(root.id().clone());
             move || children.with(|children| children.as_ref().expect("directory exists").clone())
         };
-        let root_class = match class {
-            Some(class) => format!("group/level-0 overflow-auto scrollbar-thin h-full {class}"),
-            None => "group/level-0 overflow-auto scrollbar-thin h-full".to_string(),
-        };
 
+        let root_class = format!("group/level-0 overflow-auto scrollbar-thin {class}");
         let files = root.files.read_only();
         view! {
             <div class=root_class>
@@ -241,7 +238,7 @@ mod nav {
     }
 
     #[component]
-    fn ProjectTitle(#[prop(optional, into)] class: Option<String>) -> impl IntoView {
+    fn ProjectTitle(#[prop(optional, into)] class: String) -> impl IntoView {
         let state = expect_context::<state::State>();
 
         let root_path = state.root_path().to_string_lossy().to_string();
@@ -251,12 +248,7 @@ mod nav {
             move || name.with(|name| name.to_string_lossy().to_string())
         };
 
-        let root_class = if let Some(class) = class {
-            format!("flex group {}", class)
-        } else {
-            "flex group".to_string()
-        };
-
+        let root_class = format!("flex group {}", class);
         view! {
             <div class=root_class>
                 <div class="grow font-bold uppercase" title=root_path>

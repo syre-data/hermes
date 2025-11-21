@@ -135,7 +135,7 @@ fn WorkspaceView(root: PathBuf, graph: lib::fs::DirectoryTree) -> impl IntoView 
                 <div class="grow min-w-0 h-full">
                     <dataset::Workspace />
                 </div>
-                <component::ResizablePane>
+                <component::ResizablePane class="overflow-y-auto scrollbar-thin">
                     <run::Run />
                     <formula::Workspace
                         {..}

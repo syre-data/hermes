@@ -334,11 +334,17 @@
   .flex-col {
     flex-direction: column;
   }
+  .items-center {
+    align-items: center;
+  }
   .items-end {
     align-items: flex-end;
   }
   .justify-center {
     justify-content: center;
+  }
+  .gap-1 {
+    gap: calc(var(--spacing) * 1);
   }
   .gap-2 {
     gap: calc(var(--spacing) * 2);
@@ -353,6 +359,9 @@
   }
   .overflow-hidden {
     overflow: hidden;
+  }
+  .overflow-y-auto {
+    overflow-y: auto;
   }
   .btn {
     border-radius: var(--radius-2xl);
@@ -470,14 +479,23 @@
   .py-12 {
     padding-block: calc(var(--spacing) * 12);
   }
+  .pt-\[4px\] {
+    padding-top: 4px;
+  }
   .pr-8 {
     padding-right: calc(var(--spacing) * 8);
+  }
+  .pb-\[2px\] {
+    padding-bottom: 2px;
   }
   .pl-2 {
     padding-left: calc(var(--spacing) * 2);
   }
   .text-center {
     text-align: center;
+  }
+  .align-middle {
+    vertical-align: middle;
   }
   .font-primary {
     font-family: var(--font-primary);

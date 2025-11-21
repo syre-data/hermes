@@ -185,7 +185,7 @@ fn group_indices(
 }
 
 #[component]
-pub fn Editor() -> impl IntoView {
+pub fn Editor(#[prop(optional, into)] class: String) -> impl IntoView {
     let state = expect_context::<state::State>();
     let active_formula = state.active_formula.read_only();
     let formulas = state.formulas;
@@ -193,20 +193,20 @@ pub fn Editor() -> impl IntoView {
     move || {
         if let Some(formula) = active_formula.read().as_ref() {
             let formula = formulas.get(formula).expect("formula to exist");
-            Either::Left(view! { <EditorEnabled formula /> })
+            Either::Left(view! { <EditorEnabled formula class=class.clone() /> })
         } else {
-            Either::Right(view! { <EditorDisabled /> })
+            Either::Right(view! { <EditorDisabled class=class.clone() /> })
         }
     }
 }
 
 #[component]
-fn EditorDisabled() -> impl IntoView {
-    view! { <div>"Select a formula to edit."</div> }
+fn EditorDisabled(#[prop(optional, into)] class: String) -> impl IntoView {
+    view! { <div class=class.clone()>"Select a formula to edit."</div> }
 }
 
 #[component]
-fn EditorEnabled(formula: state::Formula) -> impl IntoView {
+fn EditorEnabled(#[prop(optional, into)] class: String, formula: state::Formula) -> impl IntoView {
     let state = expect_context::<state::State>();
     let workspace_owner = expect_context::<state::WorkspaceOwner>();
     let editor_vis = expect_context::<state::FormulaEditorVisibility>();
@@ -306,13 +306,14 @@ fn EditorEnabled(formula: state::Formula) -> impl IntoView {
         }
     };
 
+    let root_class = format!("flex gap-1 items-center pt-[4px] pb-[2px] {class}");
     view! {
-        <div class="flex">
+        <div class=root_class>
             <div>{title}</div>
             <form class="grow" on:submit=save_formula_trigger>
                 <div>
                     <label
-                        class="flex border border-transparent"
+                        class="flex gap-1 items-center border border-transparent"
                         class:border-color-brand-red-600=move || error.read().is_some()
                     >
                         <Icon icon=icon::Equal />
