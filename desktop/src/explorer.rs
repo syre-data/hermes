@@ -795,15 +795,14 @@ mod nav {
                 move |_| {
                     if filename.read_untracked().is_empty() {
                         let Some(path)  = directory_tree.get_directory_path(&id) else {
-                        directory_tree.creation_slot.set(state::DirectoryTreeCreationSlot::None);
-                          return;
+                            directory_tree.creation_slot.set(state::DirectoryTreeCreationSlot::None);
+                            return;
                         };
 
-                        if directory_tree.creation_slot.with_untracked(|slot|{
+                        if directory_tree.creation_slot.with_untracked(|slot| {
                             matches!(slot, state::DirectoryTreeCreationSlot::File { parent: path })
-                        }
-                        ) {
-                        directory_tree.creation_slot.set(state::DirectoryTreeCreationSlot::None);
+                        }) {
+                            directory_tree.creation_slot.set(state::DirectoryTreeCreationSlot::None);
                         }
                     }
                 } 
@@ -874,18 +873,18 @@ mod nav {
                     };
                     state.datasets.write().push(dataset);
 
-                    state.active_dataset.write().insert(file_id);
+                    state.selected_files.write().push(file_id.clone());
+                    state.active_dataset.write().insert(file_id.clone());
                 }
             };
 
             view! {
-                <form on:submit=add_file class="w-full">
+                <form on:submit=add_file class="w-full" on:blur=onblur>
                     <div class="px-2 py-1">
                         <input
                             node_ref=input_node
                             type="text"
                             bind:value=(filename, set_filename)
-                            on:blur=onblur
                             on:input=oninput
                             class:ring-brand-red-600=move || {
                                 filename.with(|filename| !validate_filename(filename))
